@@ -1,497 +1,1190 @@
+// FloraTwin AI — Phase 1 frontend (Flutter)
+//
+// pubspec.yaml dependencies:
+//   google_fonts: ^6.2.1
+//   camera: ^0.11.0
+//   image: ^4.2.0
+//
+// Android: add <uses-permission android:name="android.permission.CAMERA"/> and set minSdkVersion 21+
+// iOS: add NSCameraUsageDescription to Info.plist.
+
+import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
+
+import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:image/image.dart' as img_lib;
 
 void main() {
-  runApp(const BotanicalDigitalTwinApp());
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const FloraTwinApp());
 }
 
 // ============================================================================
-// CORE THEME & DESIGN SYSTEM
+// DESIGN TOKENS
 // ============================================================================
-class BotanicalDigitalTwinApp extends StatelessWidget {
-  const BotanicalDigitalTwinApp({super.key});
+class C {
+  static const fern = Color(0xFF1F4D3A); // primary
+  static const moss = Color(0xFF4C8C5A); // healthy
+  static const sprout = Color(0xFFA7D676); // accent
+  static const mist = Color(0xFFF2F5EF); // background
+  static const sage = Color(0xFFE3EBDD); // soft surface
+  static const ink = Color(0xFF14221A);
+  static const muted = Color(0xFF6B7A70);
+  static const amber = Color(0xFFD9962B);
+  static const clay = Color(0xFFC4553F);
+}
+
+class FloraTwinApp extends StatelessWidget {
+  const FloraTwinApp({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final base = ThemeData(useMaterial3: true).textTheme;
+    TextStyle? sans(TextStyle? s) => s == null ? null : GoogleFonts.figtree(textStyle: s);
+    TextStyle? serif(TextStyle? s) =>
+        s == null ? null : GoogleFonts.fraunces(textStyle: s, fontWeight: FontWeight.w600);
+
+    final text = TextTheme(
+      displayLarge: sans(base.displayLarge),
+      displayMedium: sans(base.displayMedium),
+      displaySmall: sans(base.displaySmall),
+      headlineLarge: serif(base.headlineLarge),
+      headlineMedium: serif(base.headlineMedium),
+      headlineSmall: serif(base.headlineSmall),
+      titleLarge: serif(base.titleLarge),
+      titleMedium: sans(base.titleMedium),
+      titleSmall: sans(base.titleSmall),
+      bodyLarge: sans(base.bodyLarge),
+      bodyMedium: sans(base.bodyMedium),
+      bodySmall: sans(base.bodySmall),
+      labelLarge: sans(base.labelLarge),
+      labelMedium: sans(base.labelMedium),
+      labelSmall: sans(base.labelSmall),
+    ).apply(bodyColor: C.ink, displayColor: C.ink);
+
     return MaterialApp(
-      title: 'HeliosTwin Botanical OS',
+      title: 'FloraTwin',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1B4332),
-          primary: const Color(0xFF1B4332),
-          secondary: const Color(0xFF40916C),
-          tertiary: const Color(0xFFD8F3DC),
-          surface: const Color(0xFFF8F9FA),
+          seedColor: C.fern,
+          primary: C.fern,
+          secondary: C.moss,
+          surface: Colors.white,
         ),
-        scaffoldBackgroundColor: const Color(0xFFF4F6F4),
-        cardTheme: CardThemeData(
+        scaffoldBackgroundColor: C.mist,
+        textTheme: text,
+        appBarTheme: const AppBarTheme(
+          backgroundColor: C.mist,
+          surfaceTintColor: Colors.transparent,
           elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: Colors.grey.shade200),
+          foregroundColor: C.ink,
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: C.sage),
           ),
-          color: Colors.white,
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: C.sage),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: C.fern, width: 1.6),
+          ),
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            minimumSize: const Size.fromHeight(52),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size.fromHeight(52),
+            foregroundColor: C.ink,
+            side: const BorderSide(color: C.sage, width: 1.5),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
         ),
       ),
-      home: const RootOrchestrator(),
+      home: const Root(),
     );
   }
 }
 
 // ============================================================================
-// DOMAIN MODELS & FINITE STATE MACHINE (FSM)
+// DOMAIN MODELS
 // ============================================================================
-
-enum PlantHealthFSM {
-  thriving('Thriving', Color(0xFF2D6A4F), Icons.check_circle_outline, 14),
-  acclimating('Acclimating', Color(0xFFD97706), Icons.sync, 7),
-  stressed('Light/Water Stress', Color(0xFFE07A5F), Icons.warning_amber_rounded, 3),
-  recoveryMode('Recovery Mode (Critical)', Color(0xFFBC4749), Icons.medical_services_outlined, 1);
+enum HealthState {
+  thriving('Thriving', C.moss, Icons.eco_rounded),
+  attention('Needs attention', C.amber, Icons.water_drop_rounded),
+  recovering('Recovering', C.clay, Icons.healing_rounded);
 
   final String label;
   final Color color;
   final IconData icon;
-  final int photoCheckupIntervalDays;
-  const PlantHealthFSM(this.label, this.color, this.icon, this.photoCheckupIntervalDays);
+  const HealthState(this.label, this.color, this.icon);
 }
 
-enum PlacementElevation {
-  floor('Floor Level (0.0m)'),
-  table('Tabletop (0.8m)'),
-  highShelf('High Shelf / Hanging (1.8m)');
+enum Sensitivity { hardy, sensitive }
 
-  final String label;
-  const PlacementElevation(this.label);
+class Species {
+  final String name, sci, light, water, humidity, toxicNote;
+  final bool toxic;
+  final Sensitivity sensitivity;
+  const Species(this.name, this.sci, this.light, this.water, this.humidity, this.toxic,
+      this.toxicNote, this.sensitivity);
 }
 
-class DiagnosticRecord {
+const kSpecies = <Species>[
+  Species('Monstera', 'Monstera deliciosa', 'Bright indirect, 2–3 h soft sun', 'When top 5 cm of soil is dry',
+      '60–70%', true, 'Calcium oxalates irritate mouths of pets and toddlers.', Sensitivity.hardy),
+  Species('Heartleaf Philodendron', 'Philodendron hederaceum', 'Medium to bright indirect', 'When top 3 cm is dry',
+      '50–60%', true, 'Mildly toxic if chewed by pets or children.', Sensitivity.hardy),
+  Species('Golden Pothos', 'Epipremnum aureum', 'Low to bright indirect', 'When soil is dry halfway down',
+      '40–60%', true, 'Toxic to cats and dogs if eaten.', Sensitivity.hardy),
+  Species('Calathea Orbifolia', 'Goeppertia orbifolia', 'Low to medium indirect, no direct sun',
+      'Keep evenly moist, use distilled water', '70–80%', false, 'Non-toxic to pets and children.', Sensitivity.sensitive),
+  Species('Fiddle Leaf Fig', 'Ficus lyrata', 'Bright indirect, 3–4 h soft sun', 'Deep drench every ~10 days',
+      '50–60%', true, 'Sap irritates skin and the stomach of pets and children.', Sensitivity.sensitive),
+  Species('Snake Plant', 'Dracaena trifasciata', 'Low to bright light', 'Every 2–3 weeks',
+      '30–50%', true, 'Mildly toxic to pets if eaten.', Sensitivity.hardy),
+];
+
+class CheckupEntry {
   final String date;
-  final String condition;
-  final double cnnConfidence;
-  final String treatmentProtocol;
-  final bool resolved;
-
-  const DiagnosticRecord({
-    required this.date,
-    required this.condition,
-    required this.cnnConfidence,
-    required this.treatmentProtocol,
-    required this.resolved,
-  });
-}
-
-class HealthCheckupLog {
-  final String date;
-  final double canopyGreennessIndex; // 0.0 to 1.0
-  final PlantHealthFSM stateAtLog;
+  final double greenness;
   final String note;
-
-  const HealthCheckupLog({
-    required this.date,
-    required this.canopyGreennessIndex,
-    required this.stateAtLog,
-    required this.note,
-  });
+  const CheckupEntry(this.date, this.greenness, this.note);
 }
 
-class PlantSpecimen {
+class Plant {
   final String id;
-  final String commonName;
-  final String scientificName;
-  final bool isToxicToPetsOrKids;
-  final String toxicityWarning;
-  final double minDLI; // mol/m²/d
-  final double maxDLI;
-  final int idealHumidityPercent;
-  final String wateringRule;
-  final PlantHealthFSM currentFSMState;
-  final int hoursUntilNextPhotoCheckup;
+  final Species species;
+  String nickname;
+  HealthState health;
+  double heightCm, potCm;
+  String spot;
+  int daysSinceCheckup;
+  String? activeIssue;
+  final List<CheckupEntry> checkups; // newest first
+  final List<String> history; // newest first
 
-  // Spatial Digital Twin Coordinates (0..7 Grid)
-  int gridX;
-  int gridY;
-  PlacementElevation elevation;
-
-  final List<HealthCheckupLog> checkupTimeline;
-  final List<DiagnosticRecord> diagnosticHistory;
-
-  PlantSpecimen({
+  Plant({
     required this.id,
-    required this.commonName,
-    required this.scientificName,
-    required this.isToxicToPetsOrKids,
-    required this.toxicityWarning,
-    required this.minDLI,
-    required this.maxDLI,
-    required this.idealHumidityPercent,
-    required this.wateringRule,
-    required this.currentFSMState,
-    required this.hoursUntilNextPhotoCheckup,
-    required this.gridX,
-    required this.gridY,
-    required this.elevation,
-    required this.checkupTimeline,
-    required this.diagnosticHistory,
+    required this.species,
+    required this.nickname,
+    required this.health,
+    required this.heightCm,
+    required this.potCm,
+    required this.spot,
+    required this.daysSinceCheckup,
+    required this.checkups,
+    required this.history,
+    this.activeIssue,
   });
+
+  int get checkupIntervalDays => health == HealthState.recovering
+      ? 3
+      : (species.sensitivity == Sensitivity.hardy ? 30 : 7);
+  int get daysUntilCheckup => math.max(0, checkupIntervalDays - daysSinceCheckup);
+  double get greenness => checkups.isEmpty ? 0.8 : checkups.first.greenness;
 }
 
 class CareTask {
-  final String id;
-  final String plantId;
-  final String plantName;
-  final String actionType; // 'Watering', 'Nutrition', 'Medicine (Neem Oil)'
-  final String standardSchedule;
-  final String weatherAdjustedRationale;
-  bool isCompleted;
-
+  final String id, plantId, plantName, action, amount, why, nextAfter;
+  final IconData icon;
+  bool done;
   CareTask({
     required this.id,
     required this.plantId,
     required this.plantName,
-    required this.actionType,
-    required this.standardSchedule,
-    required this.weatherAdjustedRationale,
-    this.isCompleted = false,
+    required this.action,
+    required this.amount,
+    required this.why,
+    required this.nextAfter,
+    required this.icon,
+    this.done = false,
   });
 }
 
 class RelocationAlert {
-  final String id;
-  final String plantName;
-  final String reason;
-  final String targetCoordinates;
-  final String severity; // 'Seasonal Shift' | 'Severe Weather Alert'
+  final String plantName, reason, action;
+  final bool severe;
+  const RelocationAlert(this.plantName, this.reason, this.action, this.severe);
+}
 
-  const RelocationAlert({
-    required this.id,
-    required this.plantName,
-    required this.reason,
-    required this.targetCoordinates,
-    required this.severity,
-  });
+class Candidate {
+  final Species species;
+  final double confidence;
+  const Candidate(this.species, this.confidence);
+}
+
+class Diagnosis {
+  final String condition, advice;
+  final double confidence;
+  final bool healthy;
+  const Diagnosis(this.condition, this.confidence, this.advice, this.healthy);
 }
 
 // ============================================================================
-// APPLICATION STATE CONTROLLER (DIGITAL TWIN ENGINE)
+// APP STATE
 // ============================================================================
-class AppStateController extends ChangeNotifier {
-  // 1. Auth & Onboarding State
-  bool isAuthenticated = false;
-  String userEmail = '';
-  String authProvider = '';
-  bool isLocationGranted = false;
-  double latitude = 37.7749;
-  double longitude = -122.4194;
-  bool hasPets = true;
-  bool hasYoungChildren = false;
-  bool onboardingComplete = false;
+class AppState extends ChangeNotifier {
+  bool signedIn = false, locationGranted = false, onboarded = false;
+  String email = '';
+  double lat = 33.6844, lon = 73.0479; // TODO: replace with real GPS
+  bool hasPets = false, hasKids = false;
+  bool remindWatering = true, remindSeasonal = true, remindRecovery = true;
 
-  // 2. Digital Twin Spatial Engine State
-  bool is3DView = false;
-  bool showSolarHeatmap = true;
-  double timeOfDayHour = 13.5; // 1:30 PM default
-  double externalObstructionFactor = 0.20; // 20% skyline blocked by neighbor building
-  double sensorCalibrationMultiplier = 1.0; // Adjusted via physical Lux calibration
+  // TODO: replace with OpenWeatherMap response
+  final weather = (temp: 14, humidity: 84, summary: 'Overcast, light rain later');
 
-  // 5. Settings & Notification Toggles
-  bool muteRoutineWatering = false;
-  bool enableSeasonalRelocationAlerts = true;
-  bool enableRecoveryModeTriggers = true;
+  bool get safetyOn => hasPets || hasKids;
+  bool get northern => lat >= 0;
 
-  bool get safetyFilterActive => hasPets || hasYoungChildren;
+  late final List<Plant> plants = [
+    Plant(
+      id: 'p1', species: kSpecies[0], nickname: 'Monty', health: HealthState.thriving,
+      heightCm: 85, potCm: 24, spot: 'South window', daysSinceCheckup: 13,
+      checkups: const [
+        CheckupEntry('1 Nov', 0.94, 'New split leaf unfurled.'),
+        CheckupEntry('18 Oct', 0.91, 'Stable colour across the canopy.'),
+      ],
+      history: ['Aug 14: Thrips treated with spinosad, resolved'],
+    ),
+    Plant(
+      id: 'p2', species: kSpecies[3], nickname: 'Orbi', health: HealthState.recovering,
+      heightCm: 40, potCm: 18, spot: 'East window', daysSinceCheckup: 2,
+      activeIssue: 'Tip burn from tap water and dry air',
+      checkups: const [
+        CheckupEntry('11 Nov', 0.68, 'Brown leaf edges spreading.'),
+        CheckupEntry('5 Nov', 0.74, 'Crisp edges after humidity drop.'),
+      ],
+      history: ['Nov 9: Switched to distilled water, moved out of afternoon sun'],
+    ),
+    Plant(
+      id: 'p3', species: kSpecies[4], nickname: 'Fig', health: HealthState.attention,
+      heightCm: 130, potCm: 30, spot: 'Hallway shelf', daysSinceCheckup: 5,
+      checkups: const [CheckupEntry('7 Nov', 0.84, 'Slowing down as days shorten.')],
+      history: ['Jun 21: Botrytis leaf spot treated with copper fungicide, resolved'],
+    ),
+  ];
 
-  late List<PlantSpecimen> plants;
-  late List<CareTask> tasks;
-  late List<RelocationAlert> relocationQueue;
+  late final List<CareTask> tasks = [
+    CareTask(
+      id: 't1', plantId: 'p1', plantName: 'Monty', action: 'Water', amount: '450 ml',
+      icon: Icons.water_drop_rounded,
+      why: 'Pushed back 2 days. Humidity is 84% and it is overcast, so soil is drying about 38% slower.',
+      nextAfter: 'Next watering in about 9 days',
+    ),
+    CareTask(
+      id: 't2', plantId: 'p2', plantName: 'Orbi', action: 'Neem oil wipe + refill humidifier',
+      amount: 'Day 4 of 7', icon: Icons.healing_rounded,
+      why: 'Indoor heating dropped room humidity by 14% overnight, which the plant is reacting to.',
+      nextAfter: 'Next treatment tomorrow',
+    ),
+    CareTask(
+      id: 't3', plantId: 'p3', plantName: 'Fig', action: 'Feed 3-1-2 liquid fertiliser',
+      amount: 'Half strength', icon: Icons.spa_rounded,
+      why: 'Dose halved because daylight is down to 10 h 14 m and growth is slowing.',
+      nextAfter: 'Next feeding in about 5 weeks',
+    ),
+  ];
 
-  AppStateController() {
-    _seedInitialBotanicalData();
-  }
+  final List<RelocationAlert> alerts = const [
+    RelocationAlert('Fig', 'Winter sun sits lower, so the hallway shelf now gets under 2 hours of light.',
+        'Move next to the south window.', false),
+    RelocationAlert('Monty', 'Window glass may drop to 4°C tonight.', 'Pull it 30 cm back from the glass.', true),
+  ];
 
-  void _seedInitialBotanicalData() {
-    plants = [
-      PlantSpecimen(
-        id: 'p1',
-        commonName: 'Monstera Deliciosa',
-        scientificName: 'Monstera deliciosa',
-        isToxicToPetsOrKids: true,
-        toxicityWarning: 'Contains insoluble calcium oxalates. Causes intense oral irritation and swelling in cats, dogs, and toddlers.',
-        minDLI: 6.0,
-        maxDLI: 16.0,
-        idealHumidityPercent: 65,
-        wateringRule: 'Every 7–9 days (Wait for top 5cm soil dry)',
-        currentFSMState: PlantHealthFSM.thriving,
-        hoursUntilNextPhotoCheckup: 118,
-        gridX: 1,
-        gridY: 2,
-        elevation: PlacementElevation.table,
-        checkupTimeline: const [
-          HealthCheckupLog(date: '2026-11-01', canopyGreennessIndex: 0.94, stateAtLog: PlantHealthFSM.thriving, note: 'New fenestrated leaf unfurled (+12% surface area).'),
-          HealthCheckupLog(date: '2026-10-18', canopyGreennessIndex: 0.91, stateAtLog: PlantHealthFSM.thriving, note: 'Stable chlorophyll density across upper canopy.'),
-          HealthCheckupLog(date: '2026-10-04', canopyGreennessIndex: 0.85, stateAtLog: PlantHealthFSM.acclimating, note: 'Moved 1m closer to South window.'),
-        ],
-        diagnosticHistory: const [
-          DiagnosticRecord(
-            date: '2026-08-14',
-            condition: 'Thrips (Early Instar Larvae)',
-            cnnConfidence: 0.96,
-            treatmentProtocol: '3-week Spinosad foliar spray + systemic granules applied.',
-            resolved: true,
-          ),
-        ],
-      ),
-      PlantSpecimen(
-        id: 'p2',
-        commonName: 'Calathea Orbifolia',
-        scientificName: 'Goeppertia orbifolia',
-        isToxicToPetsOrKids: false,
-        toxicityWarning: '100% Pet & Child Safe (ASPCA Verified Non-Toxic). Floor placement permitted.',
-        minDLI: 3.0,
-        maxDLI: 8.5,
-        idealHumidityPercent: 75,
-        wateringRule: 'Keep evenly moist with distilled/rain water',
-        currentFSMState: PlantHealthFSM.recoveryMode,
-        hoursUntilNextPhotoCheckup: 9,
-        gridX: 4,
-        gridY: 4,
-        elevation: PlacementElevation.floor,
-        checkupTimeline: const [
-          HealthCheckupLog(date: '2026-11-11', canopyGreennessIndex: 0.68, stateAtLog: PlantHealthFSM.recoveryMode, note: 'Marginal leaf necrosis detected; FSM locked in 24h photo checkup cadence.'),
-          HealthCheckupLog(date: '2026-11-05', canopyGreennessIndex: 0.74, stateAtLog: PlantHealthFSM.stressed, note: 'Drop in ambient humidity triggered crisp edges.'),
-        ],
-        diagnosticHistory: const [
-          DiagnosticRecord(
-            date: '2026-11-09',
-            condition: 'Photo-oxidative Sunburn + Fluoride Tip Burn',
-            cnnConfidence: 0.92,
-            treatmentProtocol: 'Relocated away from direct afternoon beam; switched to distilled water + Neem oil wipe.',
-            resolved: false,
-          ),
-        ],
-      ),
-      PlantSpecimen(
-        id: 'p3',
-        commonName: 'Fiddle Leaf Fig',
-        scientificName: 'Ficus lyrata',
-        isToxicToPetsOrKids: true,
-        toxicityWarning: 'Toxic ficin & psoralen sap. Irritating to GI tract and skin for pets and children.',
-        minDLI: 10.0,
-        maxDLI: 22.0,
-        idealHumidityPercent: 55,
-        wateringRule: 'Deep drench every 10 days',
-        currentFSMState: PlantHealthFSM.acclimating,
-        hoursUntilNextPhotoCheckup: 42,
-        gridX: 0,
-        gridY: 5,
-        elevation: PlacementElevation.highShelf,
-        checkupTimeline: const [
-          HealthCheckupLog(date: '2026-11-07', canopyGreennessIndex: 0.84, stateAtLog: PlantHealthFSM.acclimating, note: 'Adapting to winter solar azimuth shift.'),
-        ],
-        diagnosticHistory: const [
-          DiagnosticRecord(
-            date: '2026-06-21',
-            condition: 'Botrytis Fungal Leaf Spot',
-            cnnConfidence: 0.89,
-            treatmentProtocol: 'Copper fungicide application (7-day cycle) + pruned lower affected leaves.',
-            resolved: true,
-          ),
-        ],
-      ),
-    ];
-
-    tasks = [
-      CareTask(
-        id: 't1',
-        plantId: 'p1',
-        plantName: 'Monstera Deliciosa',
-        actionType: 'Watering (450ml)',
-        standardSchedule: 'Originally due 2 days ago',
-        weatherAdjustedRationale: 'Watering delayed by 2 days due to 84% local humidity and overcast forecast (OpenWeatherMap evapotranspiration drop of 38%).',
-      ),
-      CareTask(
-        id: 't2',
-        plantId: 'p2',
-        plantName: 'Calathea Orbifolia',
-        actionType: 'Medicine: Cold-Pressed Neem Oil + Humidifier Refill',
-        standardSchedule: 'FSM Recovery Mode Protocol (Day 4 of 7)',
-        weatherAdjustedRationale: 'Mandatory treatment step active. Indoor heating dropped ambient RH by 14% overnight.',
-      ),
-      CareTask(
-        id: 't3',
-        plantId: 'p3',
-        plantName: 'Fiddle Leaf Fig',
-        actionType: 'Nutrition: 3-1-2 Liquid NPK Fertilizer (Half-Strength)',
-        standardSchedule: 'Monthly metabolic cycle',
-        weatherAdjustedRationale: 'Dose reduced by 50% by SunCalc Engine: Solar photoperiod shortened to 10h 14m this week.',
-      ),
-    ];
-
-    relocationQueue = const [
-      RelocationAlert(
-        id: 'r1',
-        plantName: 'Fiddle Leaf Fig',
-        reason: 'Seasonal solar declination dropped 4.2°. Current coordinate (0, 5) now receives 8.1 DLI (below 10.0 DLI threshold).',
-        targetCoordinates: 'Move to Grid (0, 2) near South Window',
-        severity: 'Seasonal Shift',
-      ),
-      RelocationAlert(
-        id: 'r2',
-        plantName: 'Monstera Deliciosa',
-        reason: 'Cold draft warning: Nocturnal window glass temperature projected at 4°C tonight.',
-        targetCoordinates: 'Shift 1 cell inland to Grid (2, 2)',
-        severity: 'Severe Weather Alert',
-      ),
-    ];
-  }
-
-  /// Astronomical SunCalc + Skyline Obstruction + Sensor Calibration DLI simulator
-  /// South Window is along X = 0 (Left edge), West Window is along Y = 0 (Top edge).
-  double calculateSimulatedDLI(int x, int y) {
-    // Distance attenuation from South (x=0) and West (y=0) windows
-    final double southWindowContribution = 18.0 * math.exp(-0.38 * x);
-    final double westWindowContribution = 12.0 * math.exp(-0.45 * y);
-
-    // Time of day solar angle factor (peaks around 13:30)
-    final double solarElevationFactor =
-    math.max(0.15, math.sin(((timeOfDayHour - 6.0) / 12.0) * math.pi));
-
-    // Apply external skyline obstruction & physical Lux sensor calibration
-    final double rawDLI = (southWindowContribution + westWindowContribution) *
-        solarElevationFactor *
-        (1.0 - (externalObstructionFactor * 0.6)) *
-        sensorCalibrationMultiplier;
-
-    return double.parse(rawDLI.clamp(0.8, 28.0).toStringAsFixed(1));
-  }
-
-  void completeAuth(String provider, String email) {
-    isAuthenticated = true;
-    authProvider = provider;
-    userEmail = email;
+  void signIn(String e) {
+    signedIn = true;
+    email = e;
     notifyListeners();
   }
 
-  void grantLocationPermission() {
-    isLocationGranted = true;
+  void signOut() {
+    signedIn = false;
+    onboarded = false;
     notifyListeners();
   }
 
-  void updateHouseholdSafety({required bool pets, required bool children}) {
-    hasPets = pets;
-    hasYoungChildren = children;
-    // Enforce floor block immediately if enabled
-    if (safetyFilterActive) {
-      for (final plant in plants) {
-        if (plant.isToxicToPetsOrKids &&
-            plant.elevation == PlacementElevation.floor) {
-          plant.elevation = PlacementElevation.table;
-        }
-      }
-    }
+  void grantLocation() {
+    locationGranted = true;
+    notifyListeners();
+  }
+
+  void setSafety({bool? pets, bool? kids}) {
+    hasPets = pets ?? hasPets;
+    hasKids = kids ?? hasKids;
     notifyListeners();
   }
 
   void finishOnboarding() {
-    onboardingComplete = true;
+    onboarded = true;
     notifyListeners();
   }
 
-  /// Validates and relocates a plant on the Digital Twin Grid
-  String? relocatePlant(
-      PlantSpecimen plant,
-      int newX,
-      int newY,
-      PlacementElevation newElevation,
-      ) {
-    if (safetyFilterActive &&
-        plant.isToxicToPetsOrKids &&
-        newElevation == PlacementElevation.floor) {
-      return 'BLOCKED BY HOUSEHOLD SAFETY FILTER: ${plant.commonName} is toxic to ${hasPets ? "pets" : ""}${hasPets && hasYoungChildren ? " & " : ""}${hasYoungChildren ? "young children" : ""}. Floor-level placement is prohibited.';
-    }
-    plant.gridX = newX;
-    plant.gridY = newY;
-    plant.elevation = newElevation;
-    notifyListeners();
-    return null;
-  }
-
-  void toggleTask(String taskId) {
-    final idx = tasks.indexWhere((t) => t.id == taskId);
-    if (idx != -1) {
-      tasks[idx].isCompleted = !tasks[idx].isCompleted;
-      notifyListeners();
-    }
-  }
-
-  void calibrateLuxSensor(double physicalLuxReading) {
-    // Baseline expected noon indoor bright reading ~ 12,000 Lux
-    sensorCalibrationMultiplier = (physicalLuxReading / 12000.0).clamp(0.4, 2.2);
+  void toggleSetting(void Function() change) {
+    change();
     notifyListeners();
   }
 
-  void triggerChange() => notifyListeners();
+  /// Closed loop: log the task, then the engine reschedules from the forecast.
+  String completeTask(CareTask t) {
+    t.done = true;
+    plants.firstWhere((p) => p.id == t.plantId).history.insert(0, 'Today: ${t.action} (${t.amount})');
+    notifyListeners();
+    return t.nextAfter;
+  }
+
+  void addPlant(Species s, String nick, double h, double pot, String spot) {
+    plants.insert(
+      0,
+      Plant(
+        id: 'p${DateTime.now().millisecondsSinceEpoch}', species: s, nickname: nick,
+        health: HealthState.thriving, heightCm: h, potCm: pot, spot: spot,
+        daysSinceCheckup: 0, checkups: [const CheckupEntry('Today', 0.9, 'First photo added.')],
+        history: ['Today: Added to your garden'],
+      ),
+    );
+    notifyListeners();
+  }
+
+  void logCheckup(Plant p, Diagnosis d) {
+    p.checkups.insert(0, CheckupEntry('Today', d.healthy ? 0.92 : 0.7, d.healthy ? 'Looks healthy.' : d.condition));
+    p.daysSinceCheckup = 0;
+    p.activeIssue = d.healthy ? null : d.condition;
+    p.health = d.healthy ? HealthState.thriving : HealthState.recovering;
+    if (!d.healthy) p.history.insert(0, 'Today: ${d.condition} detected');
+    notifyListeners();
+  }
 }
 
 // ============================================================================
-// ROOT ORCHESTRATOR (ONBOARDING VS MAIN SHELL)
+// AI SERVICE STUBS — swap with ONNX Runtime / FastAPI calls
 // ============================================================================
-class RootOrchestrator extends StatefulWidget {
-  const RootOrchestrator({super.key});
+class PlantAI {
+  static Future<List<Candidate>> identify(File photo) async {
+    await Future.delayed(const Duration(milliseconds: 1800));
+    // Mock: low top-1 confidence so the picker appears.
+    return [Candidate(kSpecies[0], 0.52), Candidate(kSpecies[1], 0.31), Candidate(kSpecies[2], 0.11)];
+  }
+
+  static Future<Diagnosis> diagnose(File photo, Plant plant) async {
+    await Future.delayed(const Duration(milliseconds: 1800));
+    return const Diagnosis(
+      'Early tip burn', 0.88,
+      'Switch to distilled or rain water, raise humidity above 65%, and trim only the fully brown tips. '
+          'Your last two check-ins show the same pattern, so recheck in 3 days.',
+      false,
+    );
+  }
+}
+
+// ============================================================================
+// PHOTO QUALITY GATE (runs on-device before the photo reaches the model)
+// ============================================================================
+enum Level { pass, warn, fail }
+
+class QualityCheck {
+  final String title, message;
+  final Level level;
+  const QualityCheck(this.title, this.message, this.level);
+}
+
+class PhotoQuality {
+  final List<QualityCheck> checks;
+  const PhotoQuality(this.checks);
+  bool get blocked => checks.any((c) => c.level == Level.fail);
+  bool get hasWarnings => checks.any((c) => c.level == Level.warn);
+}
+
+/// Top-level so it can run in an isolate via compute().
+/// Thresholds are starting points. Tune them on real photos from your target phones.
+PhotoQuality analyzePhoto(String path) {
+  var im = img_lib.decodeImage(File(path).readAsBytesSync());
+  if (im == null) {
+    return const PhotoQuality([QualityCheck('Photo', 'This image could not be read. Take a new photo.', Level.fail)]);
+  }
+  im = img_lib.bakeOrientation(im);
+  im = img_lib.copyResize(im, width: 320);
+  final w = im.width, h = im.height;
+  final lum = List<double>.filled(w * h, 0);
+  double sum = 0;
+  int green = 0, bright = 0;
+  for (var y = 0; y < h; y++) {
+    for (var x = 0; x < w; x++) {
+      final p = im.getPixel(x, y);
+      final r = p.r.toDouble(), g = p.g.toDouble(), b = p.b.toDouble();
+      final l = 0.299 * r + 0.587 * g + 0.114 * b;
+
+      lum[y * w + x] = l;
+      sum += l;
+      if (l > 250) bright++;
+      if (g > r * 1.08 && g > b * 1.08 && g > 45) green++;
+    }
+  }
+  final n = w * h;
+  final meanL = sum / n, greenRatio = green / n, glare = bright / n;
+
+  // Variance of the Laplacian: low value means blur.
+  double lapSum = 0, lapSq = 0;
+  int cnt = 0;
+  for (var y = 1; y < h - 1; y++) {
+    for (var x = 1; x < w - 1; x++) {
+      final i = y * w + x;
+      final v = 4 * lum[i] - lum[i - 1] - lum[i + 1] - lum[i - w] - lum[i + w];
+      lapSum += v;
+      lapSq += v * v;
+      cnt++;
+    }
+  }
+  final lapMean = lapSum / cnt;
+  final sharp = lapSq / cnt - lapMean * lapMean;
+
+  final checks = <QualityCheck>[
+    if (sharp < 40)
+      const QualityCheck('Focus', 'Photo is blurry. Hold steady, tap the leaf to focus, then retake.', Level.fail)
+    else if (sharp < 90)
+      const QualityCheck('Focus', 'Slightly soft. A steadier shot will give better results.', Level.warn)
+    else
+      const QualityCheck('Focus', 'Sharp and in focus.', Level.pass),
+    if (meanL < 60)
+      const QualityCheck('Light', 'Too dark. Move near a window or turn on the flash.', Level.fail)
+    else if (meanL > 220 || glare > 0.15)
+      const QualityCheck('Light', 'Too bright or glare on leaves. Step out of direct sun.', Level.warn)
+    else
+      const QualityCheck('Light', 'Good lighting.', Level.pass),
+    if (greenRatio < 0.03)
+      const QualityCheck('Plant', 'No plant found. Point the camera at the leaves.', Level.fail)
+    else if (greenRatio < 0.18)
+      const QualityCheck('Distance', 'Plant looks far away. Move closer so leaves fill the frame.', Level.warn)
+    else
+      const QualityCheck('Distance', 'Plant fills the frame well.', Level.pass),
+  ];
+  return PhotoQuality(checks);
+}
+
+// ============================================================================
+// SHARED WIDGETS
+// ============================================================================
+class SoftCard extends StatelessWidget {
+  final Widget child;
+  final EdgeInsets padding;
+  final Color color;
+  final VoidCallback? onTap;
+  const SoftCard({super.key, required this.child, this.padding = const EdgeInsets.all(16), this.color = Colors.white, this.onTap});
 
   @override
-  State<RootOrchestrator> createState() => _RootOrchestratorState();
+  Widget build(BuildContext context) => Material(
+    color: color,
+    borderRadius: BorderRadius.circular(20),
+    child: InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: onTap,
+      child: Padding(padding: padding, child: child),
+    ),
+  );
 }
 
-class _RootOrchestratorState extends State<RootOrchestrator> {
-  final AppStateController appState = AppStateController();
-  int _currentTab = 0;
+class HealthRing extends StatelessWidget {
+  final double value, size;
+  final Color color;
+  final Widget? child;
+  const HealthRing({super.key, required this.value, required this.color, this.size = 56, this.child});
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: size,
+    height: size,
+    child: TweenAnimationBuilder<double>(
+      tween: Tween(end: value),
+      duration: const Duration(milliseconds: 700),
+      curve: Curves.easeOutCubic,
+      builder: (_, v, __) => CustomPaint(painter: _RingPainter(v, color), child: Center(child: child)),
+    ),
+  );
+}
+
+class _RingPainter extends CustomPainter {
+  final double v;
+  final Color color;
+  _RingPainter(this.v, this.color);
+
+  @override
+  void paint(Canvas c, Size s) {
+    final r = Rect.fromLTWH(4, 4, s.width - 8, s.height - 8);
+    final track = Paint()..style = PaintingStyle.stroke..strokeWidth = 5..color = color.withValues(alpha: 0.15);
+    final arc = Paint()..style = PaintingStyle.stroke..strokeWidth = 5..strokeCap = StrokeCap.round..color = color;
+    c.drawArc(r, 0, math.pi * 2, false, track);
+    c.drawArc(r, -math.pi / 2, math.pi * 2 * v, false, arc);
+  }
+
+  @override
+  bool shouldRepaint(_RingPainter o) => o.v != v || o.color != color;
+}
+
+class Pill extends StatelessWidget {
+  final String text;
+  final Color color;
+  final IconData? icon;
+  const Pill(this.text, this.color, {super.key, this.icon});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    decoration: BoxDecoration(color: color.withValues(alpha: 0.13), borderRadius: BorderRadius.circular(99)),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      if (icon != null) ...[Icon(icon, size: 14, color: color), const SizedBox(width: 4)],
+      Text(text, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w700)),
+    ]),
+  );
+}
+
+class Title2 extends StatelessWidget {
+  final String text;
+  const Title2(this.text, {super.key});
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 22, bottom: 10),
+    child: Text(text, style: Theme.of(context).textTheme.titleLarge),
+  );
+}
+
+void toast(BuildContext c, String msg, {bool error = false}) {
+  ScaffoldMessenger.of(c)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(SnackBar(
+      behavior: SnackBarBehavior.floating,
+      backgroundColor: error ? C.clay : C.fern,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      content: Text(msg),
+    ));
+}
+
+// ============================================================================
+// ROOT: AUTH -> ONBOARDING -> SHELL
+// ============================================================================
+class Root extends StatefulWidget {
+  const Root({super.key});
+  @override
+  State<Root> createState() => _RootState();
+}
+
+class _RootState extends State<Root> {
+  final app = AppState();
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: app,
+    builder: (_, __) => AnimatedSwitcher(
+      duration: const Duration(milliseconds: 350),
+      child: !app.signedIn
+          ? AuthScreen(key: const ValueKey('auth'), app: app)
+          : !app.onboarded
+          ? OnboardingScreen(key: const ValueKey('onb'), app: app)
+          : Shell(key: const ValueKey('shell'), app: app),
+    ),
+  );
+}
+
+// ============================================================================
+// LOGIN / REGISTER
+// ============================================================================
+class AuthScreen extends StatefulWidget {
+  final AppState app;
+  const AuthScreen({super.key, required this.app});
+  @override
+  State<AuthScreen> createState() => _AuthScreenState();
+}
+
+class _AuthScreenState extends State<AuthScreen> {
+  final _form = GlobalKey<FormState>();
+  final _email = TextEditingController();
+  final _pass = TextEditingController();
+  bool _register = false, _hide = true, _busy = false;
+
+  @override
+  void dispose() {
+    _email.dispose();
+    _pass.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!_form.currentState!.validate()) return;
+    setState(() => _busy = true);
+    await Future.delayed(const Duration(milliseconds: 700)); // TODO: call FastAPI auth
+    if (mounted) widget.app.signIn(_email.text.trim());
+  }
 
   @override
   Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    return Scaffold(
+      backgroundColor: C.fern,
+      body: Stack(children: [
+        Positioned(top: -60, right: -50, child: _blob(220, C.moss.withValues(alpha: 0.35))),
+        Positioned(top: 90, left: -80, child: _blob(180, C.sprout.withValues(alpha: 0.18))),
+        SafeArea(
+          child: Column(children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(28, 36, 28, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    const Icon(Icons.spa_rounded, color: C.sprout),
+                    const SizedBox(width: 8),
+                    Text('FloraTwin', style: t.titleLarge?.copyWith(color: Colors.white, fontSize: 20)),
+                  ]),
+                  const SizedBox(height: 28),
+                  Text('Care that follows\nyour weather and light.',
+                      style: t.headlineMedium?.copyWith(color: Colors.white, height: 1.15)),
+                ]),
+              ),
+            ),
+            const Spacer(),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+              decoration: const BoxDecoration(
+                color: C.mist,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+              ),
+              child: SingleChildScrollView(
+                child: Form(
+                  key: _form,
+                  child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                    SegmentedButton<bool>(
+                      showSelectedIcon: false,
+                      segments: const [
+                        ButtonSegment(value: false, label: Text('Sign in')),
+                        ButtonSegment(value: true, label: Text('Create account')),
+                      ],
+                      selected: {_register},
+                      onSelectionChanged: (s) => setState(() => _register = s.first),
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _email,
+                      keyboardType: TextInputType.emailAddress,
+                      autofillHints: const [AutofillHints.email],
+                      decoration: const InputDecoration(labelText: 'Email', prefixIcon: Icon(Icons.mail_outline)),
+                      validator: (v) => (v == null || !v.contains('@') || !v.contains('.')) ? 'Enter a valid email address' : null,
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _pass,
+                      obscureText: _hide,
+                      decoration: InputDecoration(
+                        labelText: 'Password',
+                        prefixIcon: const Icon(Icons.lock_outline),
+                        suffixIcon: IconButton(
+                          icon: Icon(_hide ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                          onPressed: () => setState(() => _hide = !_hide),
+                        ),
+                      ),
+                      validator: (v) => (v == null || v.length < 6) ? 'Use at least 6 characters' : null,
+                    ),
+                    const SizedBox(height: 18),
+                    FilledButton(
+                      onPressed: _busy ? null : _submit,
+                      child: _busy
+                          ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white))
+                          : Text(_register ? 'Create account' : 'Sign in'),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(children: [
+                      Expanded(child: OutlinedButton.icon(
+                        onPressed: () => widget.app.signIn('you@gmail.com'), // TODO: Google SSO
+                        icon: const Icon(Icons.g_mobiledata, size: 28),
+                        label: const Text('Google'),
+                      )),
+                      const SizedBox(width: 10),
+                      Expanded(child: OutlinedButton.icon(
+                        onPressed: () => widget.app.signIn('you@icloud.com'), // TODO: Apple SSO
+                        icon: const Icon(Icons.apple, size: 22),
+                        label: const Text('Apple'),
+                      )),
+                    ]),
+                  ]),
+                ),
+              ),
+            ),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  Widget _blob(double s, Color c) => Container(width: s, height: s, decoration: BoxDecoration(color: c, shape: BoxShape.circle));
+}
+
+// ============================================================================
+// ONBOARDING: LOCATION + HOUSEHOLD SAFETY
+// ============================================================================
+class OnboardingScreen extends StatefulWidget {
+  final AppState app;
+  const OnboardingScreen({super.key, required this.app});
+  @override
+  State<OnboardingScreen> createState() => _OnboardingScreenState();
+}
+
+class _OnboardingScreenState extends State<OnboardingScreen> {
+  int step = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final app = widget.app;
+    final t = Theme.of(context).textTheme;
+    final steps = [
+      _Step(
+        icon: Icons.wb_sunny_rounded,
+        title: 'Share your location',
+        body: 'We use it for local weather and the sun\'s seasonal path, so watering and placement advice matches your home.',
+        child: FilledButton.icon(
+          onPressed: () {
+            app.grantLocation();
+            setState(() => step = 1);
+          },
+          icon: const Icon(Icons.my_location),
+          label: const Text('Allow location'),
+        ),
+      ),
+      _Step(
+        icon: Icons.pets_rounded,
+        title: 'Who shares your space?',
+        body: 'We will flag toxic plants and keep them off the floor if you have pets or small children.',
+        child: ListenableBuilder(
+          listenable: app,
+          builder: (_, __) => Column(children: [
+            SoftCard(
+              child: Column(children: [
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Cats or dogs'),
+                  value: app.hasPets,
+                  onChanged: (v) => app.setSafety(pets: v),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Young children'),
+                  value: app.hasKids,
+                  onChanged: (v) => app.setSafety(kids: v),
+                ),
+              ]),
+            ),
+            const SizedBox(height: 18),
+            FilledButton(onPressed: app.finishOnboarding, child: const Text('Start growing')),
+          ]),
+        ),
+      ),
+    ];
+    final s = steps[step];
+    return Scaffold(
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: List.generate(2, (i) => Expanded(
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                height: 5,
+                margin: EdgeInsets.only(right: i == 0 ? 6 : 0),
+                decoration: BoxDecoration(color: i <= step ? C.fern : C.sage, borderRadius: BorderRadius.circular(9)),
+              ),
+            ))),
+            const Spacer(),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              child: Column(
+                key: ValueKey(step),
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(color: C.sage, borderRadius: BorderRadius.circular(20)),
+                    child: Icon(s.icon, size: 32, color: C.fern),
+                  ),
+                  const SizedBox(height: 20),
+                  Text(s.title, style: t.headlineMedium),
+                  const SizedBox(height: 10),
+                  Text(s.body, style: t.bodyLarge?.copyWith(color: C.muted, height: 1.4)),
+                  const SizedBox(height: 28),
+                  s.child,
+                ],
+              ),
+            ),
+            const Spacer(flex: 2),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class _Step {
+  final IconData icon;
+  final String title, body;
+  final Widget child;
+  _Step({required this.icon, required this.title, required this.body, required this.child});
+}
+
+// ============================================================================
+// SHELL WITH CENTRE SCAN BUTTON
+// ============================================================================
+class Shell extends StatefulWidget {
+  final AppState app;
+  const Shell({super.key, required this.app});
+  @override
+  State<Shell> createState() => _ShellState();
+}
+
+class _ShellState extends State<Shell> {
+  int tab = 0;
+
+  void _scan() => Navigator.of(context).push(MaterialPageRoute(
+    fullscreenDialog: true,
+    builder: (_) => ScanFlow(app: widget.app),
+  ));
+
+  @override
+  Widget build(BuildContext context) {
+    final app = widget.app;
+    final pages = [TodayTab(app: app), PlantsTab(app: app), PlacementTab(app: app), SettingsTab(app: app)];
+    Widget item(int i, IconData icon, IconData sel, String label) {
+      final on = tab == i;
+      return Expanded(
+        child: InkWell(
+          onTap: () => setState(() => tab = i),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Icon(on ? sel : icon, color: on ? C.fern : C.muted),
+              const SizedBox(height: 2),
+              Text(label, style: TextStyle(fontSize: 11, fontWeight: on ? FontWeight.w800 : FontWeight.w500, color: on ? C.fern : C.muted)),
+            ]),
+          ),
+        ),
+      );
+    }
+
+    return Scaffold(
+      body: AnimatedSwitcher(duration: const Duration(milliseconds: 220), child: KeyedSubtree(key: ValueKey(tab), child: pages[tab])),
+      bottomNavigationBar: Container(
+        decoration: const BoxDecoration(color: Colors.white, border: Border(top: BorderSide(color: C.sage))),
+        child: SafeArea(
+          child: Row(children: [
+            item(0, Icons.today_outlined, Icons.today_rounded, 'Today'),
+            item(1, Icons.eco_outlined, Icons.eco_rounded, 'Plants'),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: GestureDetector(
+                onTap: _scan,
+                child: Container(
+                  width: 56, height: 56,
+                  decoration: const BoxDecoration(color: C.sprout, shape: BoxShape.circle),
+                  child: const Icon(Icons.photo_camera_rounded, color: C.fern, size: 26),
+                ),
+              ),
+            ),
+            item(2, Icons.light_mode_outlined, Icons.light_mode_rounded, 'Light'),
+            item(3, Icons.person_outline, Icons.person_rounded, 'You'),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// TODAY TAB
+// ============================================================================
+class TodayTab extends StatelessWidget {
+  final AppState app;
+  const TodayTab({super.key, required this.app});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
     return ListenableBuilder(
-      listenable: appState,
-      builder: (context, _) {
-        if (!appState.onboardingComplete) {
-          return OnboardingFlowScreen(appState: appState);
-        }
+      listenable: app,
+      builder: (_, __) {
+        final open = app.tasks.where((x) => !x.done).length;
+        final due = app.plants.where((p) => p.daysUntilCheckup == 0).toList();
+        return SafeArea(
+          child: ListView(padding: const EdgeInsets.fromLTRB(20, 16, 20, 24), children: [
+            Text('Good morning', style: t.headlineMedium),
+            const SizedBox(height: 4),
+            Text(open == 0 ? 'Everything is cared for today.' : '$open ${open == 1 ? 'task' : 'tasks'} for your plants today.',
+                style: t.bodyLarge?.copyWith(color: C.muted)),
+            const SizedBox(height: 16),
+            SoftCard(
+              color: C.fern,
+              child: Row(children: [
+                const Icon(Icons.cloud_rounded, color: C.sprout, size: 34),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('${app.weather.temp}°C · ${app.weather.humidity}% humidity',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
+                    const SizedBox(height: 2),
+                    Text('${app.weather.summary}. Watering times are adjusted for this.',
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 13)),
+                  ]),
+                ),
+              ]),
+            ),
+            if (due.isNotEmpty) ...[
+              const Title2('Photo check-ins due'),
+              ...due.map((p) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: SoftCard(
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      fullscreenDialog: true, builder: (_) => ScanFlow(app: app, checkupFor: p))),
+                  child: Row(children: [
+                    const Icon(Icons.photo_camera_outlined, color: C.fern),
+                    const SizedBox(width: 12),
+                    Expanded(child: Text('${p.nickname} is due for a check-in', style: const TextStyle(fontWeight: FontWeight.w700))),
+                    const Icon(Icons.chevron_right, color: C.muted),
+                  ]),
+                ),
+              )),
+            ],
+            const Title2('Care tasks'),
+            ...app.tasks.map((task) => _TaskCard(app: app, task: task)),
+          ]),
+        );
+      },
+    );
+  }
+}
 
-        final pages = [
-          DigitalTwinMapScreen(appState: appState),
-          TaskManagerCalendarScreen(appState: appState),
-          PlantInventoryListScreen(appState: appState),
-          SettingsPrivacyScreen(appState: appState),
-        ];
+class _TaskCard extends StatefulWidget {
+  final AppState app;
+  final CareTask task;
+  const _TaskCard({required this.app, required this.task});
+  @override
+  State<_TaskCard> createState() => _TaskCardState();
+}
 
+class _TaskCardState extends State<_TaskCard> {
+  bool open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final task = widget.task;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 250),
+        opacity: task.done ? 0.55 : 1,
+        child: SoftCard(
+          onTap: () => setState(() => open = !open),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(color: C.sage, borderRadius: BorderRadius.circular(14)),
+                child: Icon(task.icon, color: C.fern, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(task.action, style: TextStyle(fontWeight: FontWeight.w800, decoration: task.done ? TextDecoration.lineThrough : null)),
+                  Text('${task.plantName} · ${task.amount}', style: const TextStyle(color: C.muted, fontSize: 13)),
+                ]),
+              ),
+              IconButton.filledTonal(
+                onPressed: task.done ? null : () => toast(context, widget.app.completeTask(task)),
+                icon: Icon(task.done ? Icons.check_rounded : Icons.check),
+                style: IconButton.styleFrom(backgroundColor: task.done ? C.moss : C.sage, foregroundColor: task.done ? Colors.white : C.fern),
+              ),
+            ]),
+            AnimatedCrossFade(
+              duration: const Duration(milliseconds: 220),
+              crossFadeState: open ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+              firstChild: const SizedBox(width: double.infinity),
+              secondChild: Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(color: C.mist, borderRadius: BorderRadius.circular(12)),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Icon(Icons.lightbulb_outline, size: 18, color: C.amber),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(task.why, style: const TextStyle(fontSize: 13, height: 1.35))),
+                  ]),
+                ),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// PLANTS TAB + DETAIL
+// ============================================================================
+class PlantsTab extends StatelessWidget {
+  final AppState app;
+  const PlantsTab({super.key, required this.app});
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: app,
+    builder: (_, __) => SafeArea(
+      child: CustomScrollView(slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+          sliver: SliverToBoxAdapter(child: Text('Your plants', style: Theme.of(context).textTheme.headlineMedium)),
+        ),
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+          sliver: SliverGrid.builder(
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: 0.88),
+            itemCount: app.plants.length,
+            itemBuilder: (_, i) {
+              final p = app.plants[i];
+              return SoftCard(
+                onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => PlantDetail(app: app, plant: p))),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  HealthRing(value: p.greenness, color: p.health.color, size: 58, child: Icon(p.health.icon, color: p.health.color, size: 22)),
+                  const Spacer(),
+                  Text(p.nickname, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+                  Text(p.species.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: C.muted, fontSize: 13)),
+                  const SizedBox(height: 8),
+                  Pill(p.health.label, p.health.color),
+                ]),
+              );
+            },
+          ),
+        ),
+      ]),
+    ),
+  );
+}
+
+class PlantDetail extends StatelessWidget {
+  final AppState app;
+  final Plant plant;
+  const PlantDetail({super.key, required this.app, required this.plant});
+
+  Widget _row(IconData i, String label, String v) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 6),
+    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Icon(i, size: 20, color: C.moss),
+      const SizedBox(width: 12),
+      Expanded(child: Text.rich(TextSpan(children: [
+        TextSpan(text: '$label  ', style: const TextStyle(color: C.muted)),
+        TextSpan(text: v, style: const TextStyle(fontWeight: FontWeight.w600)),
+      ]))),
+    ]),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    return ListenableBuilder(
+      listenable: app,
+      builder: (_, __) {
+        final p = plant;
         return Scaffold(
-          body: pages[_currentTab],
-          bottomNavigationBar: NavigationBar(
-            selectedIndex: _currentTab,
-            onDestinationSelected: (idx) => setState(() => _currentTab = idx),
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.grid_view_outlined),
-                selectedIcon: Icon(Icons.view_in_ar),
-                label: 'Digital Twin',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.calendar_today_outlined),
-                selectedIcon: Icon(Icons.event_available),
-                label: 'Care & Tasks',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.eco_outlined),
-                selectedIcon: Icon(Icons.eco),
-                label: 'Plant Profiles',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.tune_outlined),
-                selectedIcon: Icon(Icons.tune),
-                label: 'Settings & Sensors',
+          appBar: AppBar(),
+          body: ListView(padding: const EdgeInsets.fromLTRB(20, 0, 20, 32), children: [
+            Row(children: [
+              HealthRing(value: p.greenness, color: p.health.color, size: 84,
+                  child: Text('${(p.greenness * 100).round()}%', style: TextStyle(fontWeight: FontWeight.w800, color: p.health.color))),
+              const SizedBox(width: 16),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(p.nickname, style: t.headlineMedium),
+                Text(p.species.sci, style: const TextStyle(fontStyle: FontStyle.italic, color: C.muted)),
+                const SizedBox(height: 8),
+                Pill(p.health.label, p.health.color, icon: p.health.icon),
+              ])),
+            ]),
+            if (p.activeIssue != null) ...[
+              const SizedBox(height: 16),
+              SoftCard(
+                color: C.clay.withValues(alpha: 0.1),
+                child: Row(children: [
+                  const Icon(Icons.healing_rounded, color: C.clay),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text('Active issue: ${p.activeIssue}', style: const TextStyle(fontWeight: FontWeight.w700))),
+                ]),
               ),
             ],
-          ),
+            const Title2('What it needs'),
+            SoftCard(child: Column(children: [
+              _row(Icons.light_mode_outlined, 'Light', p.species.light),
+              _row(Icons.water_drop_outlined, 'Water', p.species.water),
+              _row(Icons.air_rounded, 'Humidity', p.species.humidity),
+              _row(Icons.straighten_rounded, 'Size', '${p.heightCm.round()} cm tall · ${p.potCm.round()} cm pot'),
+              _row(Icons.place_outlined, 'Spot', p.spot),
+            ])),
+            const SizedBox(height: 12),
+            SoftCard(
+              color: p.species.toxic ? C.amber.withValues(alpha: 0.12) : C.sage,
+              child: Row(children: [
+                Icon(p.species.toxic ? Icons.warning_amber_rounded : Icons.verified_rounded, color: p.species.toxic ? C.amber : C.moss),
+                const SizedBox(width: 10),
+                Expanded(child: Text(p.species.toxicNote, style: const TextStyle(fontSize: 13.5))),
+              ]),
+            ),
+            const Title2('Check-ins'),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(fullscreenDialog: true, builder: (_) => ScanFlow(app: app, checkupFor: p))),
+              icon: const Icon(Icons.photo_camera_rounded),
+              label: Text(p.daysUntilCheckup == 0 ? 'Take check-in photo (due now)' : 'Take check-in photo'),
+            ),
+            const SizedBox(height: 6),
+            Text('Next check-in ${p.daysUntilCheckup == 0 ? 'is due' : 'in ${p.daysUntilCheckup} days'} · every ${p.checkupIntervalDays} days'
+                '${p.health == HealthState.recovering ? ' while recovering' : ''}',
+                style: const TextStyle(color: C.muted, fontSize: 13)),
+            const SizedBox(height: 12),
+            ...p.checkups.map((c) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: SoftCard(
+                padding: const EdgeInsets.all(14),
+                child: Row(children: [
+                  SizedBox(width: 58, child: Text(c.date, style: const TextStyle(color: C.muted, fontSize: 13))),
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(9),
+                      child: LinearProgressIndicator(value: c.greenness, minHeight: 7, backgroundColor: C.sage, color: C.moss),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(c.note, style: const TextStyle(fontSize: 13)),
+                  ])),
+                ]),
+              ),
+            )),
+            const Title2('History'),
+            ...p.history.map((h) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Padding(padding: EdgeInsets.only(top: 6), child: Icon(Icons.circle, size: 8, color: C.moss)),
+                const SizedBox(width: 10),
+                Expanded(child: Text(h)),
+              ]),
+            )),
+          ]),
         );
       },
     );
@@ -499,1298 +1192,534 @@ class _RootOrchestratorState extends State<RootOrchestrator> {
 }
 
 // ============================================================================
-// FEATURE 1: AUTHENTICATION, GPS GATEWAY & HOUSEHOLD CONTEXT ONBOARDING
+// LIGHT & PLACEMENT TAB (Phase 1: seasonal guidance, no floor grid)
 // ============================================================================
-class OnboardingFlowScreen extends StatefulWidget {
-  final AppStateController appState;
-  const OnboardingFlowScreen({super.key, required this.appState});
-
-  @override
-  State<OnboardingFlowScreen> createState() => _OnboardingFlowScreenState();
-}
-
-class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
-  final TextEditingController _emailController =
-  TextEditingController(text: 'botanist@heliostwin.io');
-  int _step = 0;
+class PlacementTab extends StatelessWidget {
+  final AppState app;
+  const PlacementTab({super.key, required this.app});
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('HeliosTwin Setup'),
-        actions: [
-          TextButton(
-            onPressed: () {
-              widget.appState.completeAuth('Quick Demo', 'demo@heliostwin.io');
-              widget.appState.grantLocationPermission();
-              widget.appState.finishOnboarding();
-            },
-            child: const Text('Skip to App Demo'),
-          ),
-        ],
-      ),
-      body: Stepper(
-        currentStep: _step,
-        onStepContinue: () {
-          if (_step == 0 && !widget.appState.isAuthenticated) {
-            widget.appState.completeAuth('Email', _emailController.text);
-          }
-          if (_step == 1 && !widget.appState.isLocationGranted) {
-            widget.appState.grantLocationPermission();
-          }
-          if (_step < 2) {
-            setState(() => _step++);
-          } else {
-            widget.appState.finishOnboarding();
-          }
-        },
-        onStepCancel: _step > 0 ? () => setState(() => _step--) : null,
-        steps: [
-          // STEP 1: SSO & EMAIL AUTH
-          Step(
-            isActive: _step >= 0,
-            state: widget.appState.isAuthenticated ? StepState.complete : StepState.indexed,
-            title: const Text('1. Account & Cloud Twin Sync'),
-            subtitle: const Text('Sync your 3D room meshes & plant FSM timelines'),
-            content: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                TextField(
-                  controller: _emailController,
-                  decoration: const InputDecoration(
-                    labelText: 'Email Address',
-                    prefixIcon: Icon(Icons.email_outlined),
-                    border: OutlineInputBorder(),
-                  ),
+    final t = Theme.of(context).textTheme;
+    final m = DateTime.now().month;
+    final winter = app.northern ? (m == 11 || m == 12 || m == 1 || m == 2) : (m >= 5 && m <= 8);
+    return SafeArea(
+      child: ListView(padding: const EdgeInsets.fromLTRB(20, 16, 20, 24), children: [
+        Text('Light & placement', style: t.headlineMedium),
+        const SizedBox(height: 14),
+        SoftCard(
+          color: C.sage,
+          child: Row(children: [
+            Icon(winter ? Icons.wb_twilight_rounded : Icons.wb_sunny_rounded, color: C.fern, size: 32),
+            const SizedBox(width: 14),
+            Expanded(child: Text(
+              winter
+                  ? 'The sun is low and days are short. Move light-hungry plants closer to windows and pull sensitive ones back from cold glass.'
+                  : 'The sun is high. Keep plants a little back from south and west windows to avoid leaf scorch.',
+              style: const TextStyle(height: 1.35),
+            )),
+          ]),
+        ),
+        if (app.remindSeasonal) ...[
+          const Title2('Suggested moves'),
+          ...app.alerts.map((a) => Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: SoftCard(
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                CircleAvatar(
+                  backgroundColor: (a.severe ? C.clay : C.amber).withValues(alpha: 0.14),
+                  child: Icon(a.severe ? Icons.ac_unit_rounded : Icons.wb_twilight_rounded, color: a.severe ? C.clay : C.amber),
                 ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.g_mobiledata, size: 24),
-                      label: const Text('Continue with Google'),
-                      onPressed: () {
-                        widget.appState.completeAuth('Google SSO', 'alex.g@gmail.com');
-                        setState(() => _step = 1);
-                      },
-                    ),
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.apple, size: 20),
-                      label: const Text('Continue with Apple ID'),
-                      onPressed: () {
-                        widget.appState.completeAuth('Apple ID', 'alex@icloud.com');
-                        setState(() => _step = 1);
-                      },
-                    ),
-                  ],
-                ),
-              ],
+                const SizedBox(width: 12),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(a.plantName, style: const TextStyle(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 2),
+                  Text(a.reason, style: const TextStyle(color: C.muted, fontSize: 13.5)),
+                  const SizedBox(height: 6),
+                  Text(a.action, style: const TextStyle(fontWeight: FontWeight.w700, color: C.fern)),
+                ])),
+              ]),
             ),
-          ),
-
-          // STEP 2: MANDATORY LOCATION PERMISSIONS GATEWAY
-          Step(
-            isActive: _step >= 1,
-            state: widget.appState.isLocationGranted ? StepState.complete : StepState.indexed,
-            title: const Text('2. Astronomical & Weather Gateway'),
-            subtitle: const Text('Mandatory GPS opt-in for SunCalc & OpenWeatherMap'),
-            content: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFFD8F3DC).withValues(alpha: 0.45),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFF40916C)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.wb_sunny_outlined, color: Color(0xFF1B4332)),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Why Precise GPS is Required:',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                        ),
-                      ),
-                    ],
-                  ),
+          )),
+        ],
+        const Title2('Where each plant is happiest'),
+        ...app.plants.map((p) {
+          final blocked = app.safetyOn && p.species.toxic;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: SoftCard(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  Text(p.nickname, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                  const Spacer(),
+                  Text('Now: ${p.spot}', style: const TextStyle(color: C.muted, fontSize: 13)),
+                ]),
+                const SizedBox(height: 6),
+                Text(p.species.light),
+                if (blocked) ...[
                   const SizedBox(height: 8),
-                  const Text(
-                    '• SunCalc Astronomical Engine: Calculates exact solar azimuth, zenith, and seasonal window beam angles for your latitude/longitude.\n'
-                        '• OpenWeatherMap API: Adjusts watering intervals dynamically using local cloud cover, humidity, and vapor pressure deficit (VPD).',
-                    style: TextStyle(fontSize: 13.5, height: 1.4),
-                  ),
-                  const SizedBox(height: 12),
-                  FilledButton.icon(
-                    onPressed: () {
-                      widget.appState.grantLocationPermission();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('GPS Locked: 37.7749° N, 122.4194° W (SunCalc Initialized)'),
-                        ),
-                      );
-                    },
-                    icon: Icon(widget.appState.isLocationGranted
-                        ? Icons.check_circle
-                        : Icons.my_location),
-                    label: Text(widget.appState.isLocationGranted
-                        ? 'GPS Telemetry Active (37.77° N, -122.41° W)'
-                        : 'Authorize Precise Location Access'),
-                  ),
+                  const Pill('Keep off the floor', C.amber, icon: Icons.shield_outlined),
                 ],
-              ),
+              ]),
             ),
-          ),
-
-          // STEP 3: HOUSEHOLD CONTEXT & TOXICITY FILTER
-          Step(
-            isActive: _step >= 2,
-            title: const Text('3. Household Safety Context'),
-            subtitle: const Text('Auto-configures floor-level toxicity blockers'),
-            content: Column(
-              children: [
-                SwitchListTile(
-                  title: const Text('Curious Pets in Household (Cats / Dogs)'),
-                  subtitle: const Text('Blocks floor placement of Calcium Oxalate / Saponin species'),
-                  secondary: const Icon(Icons.pets),
-                  value: widget.appState.hasPets,
-                  onChanged: (val) => widget.appState.updateHouseholdSafety(
-                    pets: val,
-                    children: widget.appState.hasYoungChildren,
-                  ),
-                ),
-                SwitchListTile(
-                  title: const Text('Young Children / Toddlers'),
-                  subtitle: const Text('Enforces elevated placement (>= 0.8m) for toxic sap/foliage'),
-                  secondary: const Icon(Icons.child_care),
-                  value: widget.appState.hasYoungChildren,
-                  onChanged: (val) => widget.appState.updateHouseholdSafety(
-                    pets: widget.appState.hasPets,
-                    children: val,
-                  ),
-                ),
-                if (widget.appState.safetyFilterActive)
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.amber.shade50,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.amber.shade700),
-                    ),
-                    child: const Row(
-                      children: [
-                        Icon(Icons.shield_outlined, color: Colors.amber),
-                        SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            'Household Safety Shield Active: Floor-level (0.0m) drop targets are locked for toxic plant species.',
-                            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
+          );
+        }),
+      ]),
     );
   }
 }
 
 // ============================================================================
-// FEATURE 2: THE DIGITAL TWIN MAP (2D/3D + DLI HEATMAP + DRAG & DROP)
+// SETTINGS TAB
 // ============================================================================
-class DigitalTwinMapScreen extends StatefulWidget {
-  final AppStateController appState;
-  const DigitalTwinMapScreen({super.key, required this.appState});
+class SettingsTab extends StatelessWidget {
+  final AppState app;
+  const SettingsTab({super.key, required this.app});
 
   @override
-  State<DigitalTwinMapScreen> createState() => _DigitalTwinMapScreenState();
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: app,
+    builder: (_, __) => SafeArea(
+      child: ListView(padding: const EdgeInsets.fromLTRB(20, 16, 20, 24), children: [
+        Text('You', style: Theme.of(context).textTheme.headlineMedium),
+        const SizedBox(height: 14),
+        SoftCard(child: Row(children: [
+          const CircleAvatar(backgroundColor: C.sage, child: Icon(Icons.person, color: C.fern)),
+          const SizedBox(width: 12),
+          Expanded(child: Text(app.email, style: const TextStyle(fontWeight: FontWeight.w700))),
+        ])),
+        const Title2('Household safety'),
+        SoftCard(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6), child: Column(children: [
+          SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Cats or dogs'), value: app.hasPets, onChanged: (v) => app.setSafety(pets: v)),
+          SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Young children'), value: app.hasKids, onChanged: (v) => app.setSafety(kids: v)),
+        ])),
+        const Title2('Notifications'),
+        SoftCard(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6), child: Column(children: [
+          SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Watering reminders'), value: app.remindWatering,
+              onChanged: (v) => app.toggleSetting(() => app.remindWatering = v)),
+          SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Seasonal and weather move alerts'), value: app.remindSeasonal,
+              onChanged: (v) => app.toggleSetting(() => app.remindSeasonal = v)),
+          SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Recovery mode alerts'), value: app.remindRecovery,
+              onChanged: (v) => app.toggleSetting(() => app.remindRecovery = v)),
+        ])),
+        const Title2('Location'),
+        SoftCard(child: Row(children: [
+          Icon(app.locationGranted ? Icons.location_on : Icons.location_off, color: C.fern),
+          const SizedBox(width: 12),
+          Expanded(child: Text(app.locationGranted ? 'Using your location for weather and sun path' : 'Location is off')),
+        ])),
+        const SizedBox(height: 24),
+        OutlinedButton(onPressed: app.signOut, child: const Text('Sign out')),
+      ]),
+    ),
+  );
 }
 
-class _DigitalTwinMapScreenState extends State<DigitalTwinMapScreen> {
-  PlantSpecimen? _selectedPlant;
-  int? _previewX;
-  int? _previewY;
+// ============================================================================
+// SCAN FLOW: still capture -> quality gate -> AI -> pick/details or diagnosis
+// ============================================================================
+enum Phase { capture, checking, review, thinking, pick, details, diagnosis }
+
+class ScanFlow extends StatefulWidget {
+  final AppState app;
+  final Plant? checkupFor;
+  const ScanFlow({super.key, required this.app, this.checkupFor});
+  @override
+  State<ScanFlow> createState() => _ScanFlowState();
+}
+
+class _ScanFlowState extends State<ScanFlow> {
+  CameraController? _cam;
+  String? _camError;
+  FlashMode _flash = FlashMode.off;
+  Phase phase = Phase.capture;
+  File? photo;
+  PhotoQuality? quality;
+  List<Candidate> candidates = [];
+  Species? chosen;
+  Diagnosis? diagnosis;
+  Timer? _tipTimer;
+  int _tip = 0;
+
+  final _nick = TextEditingController();
+  final _height = TextEditingController();
+  final _pot = TextEditingController();
+  String _spot = 'South window';
+  static const spots = ['South window', 'East window', 'West window', 'North window', 'Bright room, no window', 'Hallway'];
+  static const tips = [
+    'Fill about half the frame with leaves.',
+    'Use daylight and avoid strong backlight.',
+    'Tap a leaf to focus, then hold steady.',
+  ];
+
+  bool get isCheckup => widget.checkupFor != null;
 
   @override
   void initState() {
     super.initState();
-    _selectedPlant = widget.appState.plants.first;
+    _initCamera();
+    _tipTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (mounted && phase == Phase.capture) setState(() => _tip = (_tip + 1) % tips.length);
+    });
   }
 
   @override
-  Widget build(BuildContext context) {
-    final app = widget.appState;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Room Digital Twin', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            Text('SunCalc Solar Raytracer • 8x8 Meter Grid', style: TextStyle(fontSize: 11.5)),
-          ],
-        ),
-        actions: [
-          // DLI Heatmap Toggle
-          FilterChip(
-            label: const Text('DLI Heatmap'),
-            selected: app.showSolarHeatmap,
-            avatar: const Icon(Icons.wb_iridescent_outlined, size: 16),
-            onSelected: (v) {
-              app.showSolarHeatmap = v;
-              app.triggerChange();
-            },
-          ),
-          const SizedBox(width: 8),
-          // 2D / 3D Perspective Toggle
-          SegmentedButton<bool>(
-            segments: const [
-              ButtonSegment(value: false, label: Text('2D'), icon: Icon(Icons.grid_on, size: 16)),
-              ButtonSegment(value: true, label: Text('3D'), icon: Icon(Icons.view_in_ar, size: 16)),
-            ],
-            selected: {app.is3DView},
-            onSelectionChanged: (set) {
-              app.is3DView = set.first;
-              app.triggerChange();
-            },
-          ),
-          const SizedBox(width: 12),
-        ],
-      ),
-      body: Column(
-        children: [
-          // Top Solar Time & Safety Banner
-          Container(
-            color: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    const Icon(Icons.wb_sunny, size: 18, color: Colors.amber),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Simulated Solar Time: ${app.timeOfDayHour.toInt()}:${((app.timeOfDayHour % 1) * 60).toInt().toString().padLeft(2, '0')}',
-                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                    ),
-                    Expanded(
-                      child: Slider(
-                        value: app.timeOfDayHour,
-                        min: 6.0,
-                        max: 19.5,
-                        divisions: 27,
-                        onChanged: (v) {
-                          app.timeOfDayHour = v;
-                          app.triggerChange();
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'South Window: Left Edge (X=0)  |  West Window: Top Edge (Y=0)',
-                      style: TextStyle(fontSize: 11.5, color: Colors.black54),
-                    ),
-                    if (app.safetyFilterActive)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.red.shade50,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          'Pet/Child Floor Lock: ON',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.red.shade800,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-
-          // Interactive 2D Konva-Style Grid / 3D Perspective Space
-          Expanded(
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 450),
-                  curve: Curves.easeOutCubic,
-                  transformAlignment: Alignment.center,
-                  transform: app.is3DView
-                      ? (Matrix4.identity()
-                    ..setEntry(3, 2, 0.0012)
-                    ..rotateX(-0.62)
-                    ..rotateZ(0.28)
-                    ..scaleByDouble(0.88, 0.88, 0.88, 1.0))
-                      : Matrix4.identity(),
-                  child: AspectRatio(
-                    aspectRatio: 1,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF262A2C),
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: app.is3DView ? 0.35 : 0.12),
-                            blurRadius: app.is3DView ? 28 : 12,
-                            offset: Offset(0, app.is3DView ? 22 : 6),
-                          ),
-                        ],
-                        border: Border.all(color: Colors.amber.shade400, width: 3),
-                      ),
-                      child: GridView.builder(
-                        physics: const NeverScrollableScrollPhysics(),
-                        padding: const EdgeInsets.all(6),
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 6,
-                          crossAxisSpacing: 4,
-                          mainAxisSpacing: 4,
-                        ),
-                        itemCount: 36,
-                        itemBuilder: (context, index) {
-                          final int x = index % 6;
-                          final int y = index ~/ 6;
-                          final double cellDLI = app.calculateSimulatedDLI(x, y);
-                          final PlantSpecimen? occupant = app.plants
-                              .cast<PlantSpecimen?>()
-                              .firstWhere(
-                                (p) => p!.gridX == x && p.gridY == y,
-                            orElse: () => null,
-                          );
-
-                          return DragTarget<PlantSpecimen>(
-                            onWillAcceptWithDetails: (details) {
-                              setState(() {
-                                _previewX = x;
-                                _previewY = y;
-                              });
-                              return true;
-                            },
-                            onLeave: (_) {
-                              setState(() {
-                                _previewX = null;
-                                _previewY = null;
-                              });
-                            },
-                            onAcceptWithDetails: (details) {
-                              setState(() {
-                                _previewX = null;
-                                _previewY = null;
-                              });
-                              _handleDropRelocation(context, details.data, x, y);
-                            },
-                            builder: (context, candidateData, rejectedData) {
-                              final bool isHovered = _previewX == x && _previewY == y;
-                              return GestureDetector(
-                                onTap: () {
-                                  if (occupant != null) {
-                                    setState(() => _selectedPlant = occupant);
-                                  }
-                                },
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: app.showSolarHeatmap
-                                        ? _dliToHeatmapColor(cellDLI)
-                                        : const Color(0xFF343A40),
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(
-                                      color: isHovered
-                                          ? Colors.white
-                                          : (occupant != null && occupant == _selectedPlant
-                                          ? Colors.greenAccent
-                                          : Colors.white24),
-                                      width: isHovered || (occupant == _selectedPlant && occupant != null)
-                                          ? 2.5
-                                          : 0.8,
-                                    ),
-                                  ),
-                                  child: Stack(
-                                    children: [
-                                      // Coordinate & DLI readout
-                                      Positioned(
-                                        top: 3,
-                                        left: 4,
-                                        child: Text(
-                                          '($x,$y)\n${cellDLI}dli',
-                                          style: const TextStyle(
-                                            fontSize: 8.5,
-                                            height: 1.1,
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ),
-                                      // Draggable Plant Token
-                                      if (occupant != null)
-                                        Center(
-                                          child: Draggable<PlantSpecimen>(
-                                            data: occupant,
-                                            feedback: Material(
-                                              color: Colors.transparent,
-                                              child: _buildPlantToken(occupant, isDragging: true),
-                                            ),
-                                            childWhenDragging: const Opacity(
-                                              opacity: 0.3,
-                                              child: Icon(Icons.yard, color: Colors.white),
-                                            ),
-                                            child: _buildPlantToken(occupant),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            },
-                          );
-                        },
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-
-          // Bottom Inspector Panel: Thriving Compatibility & Elevation Controls
-          if (_selectedPlant != null) _buildSelectedPlantCompatibilityBar(_selectedPlant!, app),
-        ],
-      ),
-    );
+  void dispose() {
+    _tipTimer?.cancel();
+    _cam?.dispose();
+    _nick.dispose();
+    _height.dispose();
+    _pot.dispose();
+    super.dispose();
   }
 
-  Widget _buildPlantToken(PlantSpecimen plant, {bool isDragging = false}) {
-    return Container(
-      padding: EdgeInsets.all(isDragging ? 10 : 5),
-      decoration: BoxDecoration(
-        color: plant.currentFSMState.color,
-        shape: BoxShape.circle,
-        border: Border.all(color: Colors.white, width: 2),
-        boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 4)],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            plant.isToxicToPetsOrKids ? Icons.warning_amber_rounded : Icons.local_florist,
-            color: Colors.white,
-            size: isDragging ? 24 : 16,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSelectedPlantCompatibilityBar(PlantSpecimen plant, AppStateController app) {
-    final double currentDLI = app.calculateSimulatedDLI(plant.gridX, plant.gridY);
-    final bool willThrive = currentDLI >= plant.minDLI && currentDLI <= plant.maxDLI;
-    final String statusText = willThrive
-        ? 'THRIVING ZONE: $currentDLI DLI is within ideal [${plant.minDLI}–${plant.maxDLI} mol/m²/d]'
-        : (currentDLI < plant.minDLI
-        ? 'LIGHT DEFICIT: $currentDLI DLI is below minimum ${plant.minDLI} DLI'
-        : 'SUNBURN RISK: $currentDLI DLI exceeds maximum ${plant.maxDLI} DLI');
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: Colors.black12)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              CircleAvatar(
-                backgroundColor: plant.currentFSMState.color,
-                radius: 16,
-                child: const Icon(Icons.eco, color: Colors.white, size: 18),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '${plant.commonName} @ Grid (${plant.gridX}, ${plant.gridY})',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14.5),
-                    ),
-                    Text(
-                      statusText,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: willThrive ? Colors.green.shade800 : Colors.deepOrange.shade800,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              DropdownButton<PlacementElevation>(
-                value: plant.elevation,
-                underline: const SizedBox(),
-                items: PlacementElevation.values
-                    .map((e) => DropdownMenuItem(
-                  value: e,
-                  child: Text(e.label, style: const TextStyle(fontSize: 12)),
-                ))
-                    .toList(),
-                onChanged: (newElev) {
-                  if (newElev != null) {
-                    final err = app.relocatePlant(plant, plant.gridX, plant.gridY, newElev);
-                    if (err != null) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(backgroundColor: Colors.red.shade800, content: Text(err)),
-                      );
-                    }
-                  }
-                },
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Tip: Drag and drop any plant icon across the grid to test solar compatibility before moving it physically.',
-            style: TextStyle(fontSize: 11.5, color: Colors.black54),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _handleDropRelocation(BuildContext context, PlantSpecimen plant, int x, int y) {
-    final String? error = widget.appState.relocatePlant(plant, x, y, plant.elevation);
-    setState(() => _selectedPlant = plant);
-    if (error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(backgroundColor: Colors.red.shade800, content: Text(error)),
-      );
-    } else {
-      final dli = widget.appState.calculateSimulatedDLI(x, y);
-      final ok = dli >= plant.minDLI && dli <= plant.maxDLI;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: ok ? const Color(0xFF1B4332) : Colors.orange.shade900,
-          content: Text(
-            ok
-                ? 'Moved ${plant.commonName} to ($x, $y) — Optimal $dli DLI!'
-                : 'Warning: ($x, $y) provides $dli DLI (Target: ${plant.minDLI}–${plant.maxDLI} DLI).',
-          ),
-        ),
-      );
+  Future<void> _initCamera() async {
+    try {
+      final cams = await availableCameras();
+      if (cams.isEmpty) {
+        if (mounted) setState(() => _camError = 'No camera found on this device.');
+        return;
+      }
+      final back = cams.firstWhere((c) => c.lensDirection == CameraLensDirection.back, orElse: () => cams.first);
+      final c = CameraController(back, ResolutionPreset.veryHigh, enableAudio: false);
+      await c.initialize();
+      await c.setFlashMode(_flash);
+      if (!mounted) return c.dispose();
+      setState(() => _cam = c);
+    } on CameraException catch (e) {
+      if (mounted) {
+        setState(() => _camError = e.code.contains('Denied')
+            ? 'Camera access is off. Turn it on in your phone settings to scan plants.'
+            : 'The camera could not start. Close other camera apps and try again.');
+      }
+    } catch (_) {
+      if (mounted) setState(() => _camError = 'No camera found on this device.');
     }
   }
 
-  Color _dliToHeatmapColor(double dli) {
-    if (dli >= 16.0) return const Color(0xFFE63946).withValues(alpha: 0.85); // High sun
-    if (dli >= 10.0) return const Color(0xFFF4A261).withValues(alpha: 0.85); // Bright indirect
-    if (dli >= 5.5) return const Color(0xFFE9C46A).withValues(alpha: 0.80); // Medium
-    return const Color(0xFF264653).withValues(alpha: 0.85); // Low shade
+  Future<void> _shoot() async {
+    final c = _cam;
+    if (c == null || !c.value.isInitialized || c.value.isTakingPicture) return;
+    try {
+      final f = await c.takePicture();
+      photo = File(f.path);
+      setState(() => phase = Phase.checking);
+      final q = await compute(analyzePhoto, f.path);
+      if (!mounted) return;
+      setState(() {
+        quality = q;
+        phase = Phase.review;
+      });
+    } catch (_) {
+      if (mounted) toast(context, 'Could not take the photo. Try again.', error: true);
+    }
   }
-}
 
-// ============================================================================
-// FEATURE 3: TASK MANAGER & CARE CALENDAR (WEATHER-ADJUSTED + RELOCATION QUEUE)
-// ============================================================================
-class TaskManagerCalendarScreen extends StatelessWidget {
-  final AppStateController appState;
-  const TaskManagerCalendarScreen({super.key, required this.appState});
+  Future<void> _toggleFlash() async {
+    _flash = _flash == FlashMode.off ? FlashMode.auto : FlashMode.off;
+    await _cam?.setFlashMode(_flash);
+    setState(() {});
+  }
+
+  Future<void> _submitPhoto() async {
+    setState(() => phase = Phase.thinking);
+    if (isCheckup) {
+      final d = await PlantAI.diagnose(photo!, widget.checkupFor!);
+      if (mounted) setState(() { diagnosis = d; phase = Phase.diagnosis; });
+    } else {
+      final list = await PlantAI.identify(photo!);
+      if (!mounted) return;
+      setState(() {
+        candidates = list;
+        if (list.first.confidence >= 0.75) {
+          chosen = list.first.species;
+          _nick.text = chosen!.name.split(' ').first;
+          phase = Phase.details;
+        } else {
+          phase = Phase.pick; // top-3 picker when unsure
+        }
+      });
+    }
+  }
+
+  void _retake() => setState(() {
+    photo = null;
+    quality = null;
+    phase = Phase.capture;
+  });
+
+  void _savePlant() {
+    final h = double.tryParse(_height.text) ?? 30;
+    final p = double.tryParse(_pot.text) ?? 15;
+    final name = _nick.text.trim().isEmpty ? chosen!.name : _nick.text.trim();
+    widget.app.addPlant(chosen!, name, h, p, _spot);
+    final m = ScaffoldMessenger.of(context);
+    Navigator.of(context).pop();
+    m.showSnackBar(SnackBar(behavior: SnackBarBehavior.floating, backgroundColor: C.fern, content: Text('$name added to your garden')));
+  }
 
   @override
   Widget build(BuildContext context) {
+    final dark = phase == Phase.capture;
     return Scaffold(
+      backgroundColor: dark ? Colors.black : C.mist,
       appBar: AppBar(
-        title: const Text('Care Operations & Relocation Queue'),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // OpenWeatherMap Live Telemetry Banner
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF1B4332), Color(0xFF2D6A4F)],
-              ),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.cloud_sync, color: Colors.white, size: 32),
-                SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Multi-Factor Rule Engine Active',
-                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                      ),
-                      SizedBox(height: 2),
-                      Text(
-                        'OpenWeatherMap: 84% Humidity • Overcast • Solar Photoperiod: 10h 14m. Schedules auto-adjusted.',
-                        style: TextStyle(color: Colors.white70, fontSize: 12),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-
-          // Daily Actionable To-Do List
-          const Text(
-            'Daily Actionable Checklist (Watering, Nutrition, Medicine)',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          ...appState.tasks.map((task) => Card(
-            margin: const EdgeInsets.only(bottom: 12),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  CheckboxListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: task.isCompleted,
-                    onChanged: (_) => appState.toggleTask(task.id),
-                    title: Text(
-                      '${task.plantName} — ${task.actionType}',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        decoration: task.isCompleted ? TextDecoration.lineThrough : null,
-                      ),
-                    ),
-                    subtitle: Text(task.standardSchedule),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.blueGrey.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.blueGrey.shade200),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Icon(Icons.psychology_outlined, size: 18, color: Color(0xFF1B4332)),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Weather-Adjusted Rationale: ${task.weatherAdjustedRationale}',
-                            style: const TextStyle(fontSize: 12.5, fontStyle: FontStyle.italic),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          )),
-
-          const SizedBox(height: 16),
-          // Prioritized Relocation Queue
-          const Text(
-            'Spatial Relocation Queue (Sun Shifts & Weather Alerts)',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          ...appState.relocationQueue.map((alert) => Card(
-            margin: const EdgeInsets.only(bottom: 10),
-            child: ListTile(
-              leading: CircleAvatar(
-                backgroundColor: alert.severity.contains('Severe')
-                    ? Colors.red.shade100
-                    : Colors.amber.shade100,
-                child: Icon(
-                  alert.severity.contains('Severe') ? Icons.storm : Icons.wb_twilight,
-                  color: alert.severity.contains('Severe')
-                      ? Colors.red.shade800
-                      : Colors.amber.shade900,
-                ),
-              ),
-              title: Text(
-                '${alert.plantName} (${alert.severity})',
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-              ),
-              subtitle: Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text('${alert.reason}\nAction: ${alert.targetCoordinates}'),
-              ),
-            ),
-          )),
+        backgroundColor: dark ? Colors.black : C.mist,
+        foregroundColor: dark ? Colors.white : C.ink,
+        leading: IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.of(context).pop()),
+        title: Text(isCheckup ? 'Check-in: ${widget.checkupFor!.nickname}' : 'Add a plant',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: dark ? Colors.white : C.ink)),
+        actions: [
+          if (dark && _cam != null)
+            IconButton(icon: Icon(_flash == FlashMode.off ? Icons.flash_off : Icons.flash_auto), onPressed: _toggleFlash),
         ],
+      ),
+      body: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 250),
+        child: KeyedSubtree(key: ValueKey(phase), child: switch (phase) {
+          Phase.capture => _capture(),
+          Phase.checking => _busy('Checking photo quality'),
+          Phase.review => _review(),
+          Phase.thinking => _busy(isCheckup ? 'Looking at the leaves' : 'Identifying your plant'),
+          Phase.pick => _pick(),
+          Phase.details => _details(),
+          Phase.diagnosis => _diagnosis(),
+        }),
       ),
     );
   }
-}
 
-// ============================================================================
-// FEATURE 4: INDIVIDUAL PLANT DETAIL PROFILE (FSM + CNN DIAGNOSTICS + TOXICITY)
-// ============================================================================
-class PlantInventoryListScreen extends StatelessWidget {
-  final AppStateController appState;
-  const PlantInventoryListScreen({super.key, required this.appState});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Centralized Botanical Inventory')),
-      body: ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: appState.plants.length,
-        itemBuilder: (context, index) {
-          final plant = appState.plants[index];
-          return Card(
-            margin: const EdgeInsets.only(bottom: 12),
-            child: ListTile(
-              contentPadding: const EdgeInsets.all(14),
-              leading: CircleAvatar(
-                radius: 24,
-                backgroundColor: plant.currentFSMState.color,
-                child: Icon(plant.currentFSMState.icon, color: Colors.white),
+  // ---------- capture ----------
+  Widget _capture() {
+    if (_camError != null) {
+      return Center(child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.no_photography_outlined, color: Colors.white70, size: 48),
+          const SizedBox(height: 14),
+          Text(_camError!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, height: 1.4)),
+          const SizedBox(height: 18),
+          FilledButton(onPressed: () { setState(() => _camError = null); _initCamera(); }, child: const Text('Try again')),
+        ]),
+      ));
+    }
+    final c = _cam;
+    if (c == null) return const Center(child: CircularProgressIndicator(color: C.sprout));
+    return Column(children: [
+      Expanded(
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: LayoutBuilder(builder: (ctx, box) => GestureDetector(
+            onTapUp: (d) {
+              final o = Offset(d.localPosition.dx / box.maxWidth, d.localPosition.dy / box.maxHeight);
+              c.setFocusPoint(o);
+              c.setExposurePoint(o);
+            },
+            child: Stack(fit: StackFit.expand, children: [
+              FittedBox(
+                fit: BoxFit.cover,
+                child: SizedBox(width: c.value.previewSize!.height, height: c.value.previewSize!.width, child: CameraPreview(c)),
               ),
-              title: Text(
-                plant.commonName,
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-              subtitle: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(plant.scientificName, style: const TextStyle(fontStyle: FontStyle.italic)),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 4,
-                    children: [
-                      Chip(
-                        visualDensity: VisualDensity.compact,
-                        label: Text(
-                          'FSM: ${plant.currentFSMState.label}',
-                          style: const TextStyle(fontSize: 11, color: Colors.white),
-                        ),
-                        backgroundColor: plant.currentFSMState.color,
-                      ),
-                      Chip(
-                        visualDensity: VisualDensity.compact,
-                        label: Text(
-                          plant.isToxicToPetsOrKids ? 'Toxic (Pets/Kids)' : 'Non-Toxic Safe',
-                          style: const TextStyle(fontSize: 11),
-                        ),
-                        backgroundColor: plant.isToxicToPetsOrKids
-                            ? Colors.red.shade100
-                            : Colors.green.shade100,
-                      ),
-                    ],
+              CustomPaint(painter: _FramePainter()),
+              Positioned(
+                left: 16, right: 16, top: 16,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 300),
+                  child: Container(
+                    key: ValueKey(_tip),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.5), borderRadius: BorderRadius.circular(14)),
+                    child: Row(children: [
+                      const Icon(Icons.tips_and_updates_outlined, color: C.sprout, size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(tips[_tip], style: const TextStyle(color: Colors.white, fontSize: 13.5))),
+                    ]),
                   ),
-                ],
+                ),
               ),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => PlantDetailProfileScreen(plant: plant),
-                  ),
-                );
-              },
+            ]),
+          )),
+        ),
+      ),
+      SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 18),
+          child: GestureDetector(
+            onTap: _shoot,
+            child: Container(
+              width: 76, height: 76,
+              padding: const EdgeInsets.all(5),
+              decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 3)),
+              child: Container(decoration: const BoxDecoration(color: C.sprout, shape: BoxShape.circle)),
             ),
-          );
+          ),
+        ),
+      ),
+    ]);
+  }
+
+  // ---------- busy ----------
+  Widget _busy(String label) => Center(
+    child: Column(mainAxisSize: MainAxisSize.min, children: [
+      const SizedBox(width: 44, height: 44, child: CircularProgressIndicator(strokeWidth: 3.5, color: C.fern)),
+      const SizedBox(height: 18),
+      Text(label, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+    ]),
+  );
+
+  // ---------- review (quality gate) ----------
+  Widget _review() {
+    final q = quality!;
+    final headline = q.blocked
+        ? 'Let\'s retake this one'
+        : q.hasWarnings ? 'Usable, but could be better' : 'Great photo';
+    return ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 24), children: [
+      ClipRRect(borderRadius: BorderRadius.circular(22), child: AspectRatio(aspectRatio: 4 / 3, child: Image.file(photo!, fit: BoxFit.cover))),
+      const SizedBox(height: 16),
+      Text(headline, style: Theme.of(context).textTheme.titleLarge),
+      const SizedBox(height: 10),
+      ...q.checks.map((c) {
+        final col = switch (c.level) { Level.pass => C.moss, Level.warn => C.amber, Level.fail => C.clay };
+        final ic = switch (c.level) { Level.pass => Icons.check_circle_rounded, Level.warn => Icons.error_rounded, Level.fail => Icons.cancel_rounded };
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: SoftCard(
+            padding: const EdgeInsets.all(12),
+            child: Row(children: [
+              Icon(ic, color: col),
+              const SizedBox(width: 10),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(c.title, style: const TextStyle(fontWeight: FontWeight.w800)),
+                Text(c.message, style: const TextStyle(color: C.muted, fontSize: 13.5)),
+              ])),
+            ]),
+          ),
+        );
+      }),
+      const SizedBox(height: 12),
+      if (q.blocked)
+        FilledButton.icon(onPressed: _retake, icon: const Icon(Icons.replay), label: const Text('Retake photo'))
+      else ...[
+        FilledButton(onPressed: _submitPhoto, child: Text(q.hasWarnings ? 'Use anyway' : 'Use this photo')),
+        if (q.hasWarnings) ...[const SizedBox(height: 10), OutlinedButton(onPressed: _retake, child: const Text('Retake photo'))],
+      ],
+    ]);
+  }
+
+  // ---------- pick top-3 ----------
+  Widget _pick() => ListView(padding: const EdgeInsets.fromLTRB(20, 8, 20, 24), children: [
+    Text('Which one is it?', style: Theme.of(context).textTheme.headlineSmall),
+    const SizedBox(height: 6),
+    const Text('These plants look alike. Pick the closest match.', style: TextStyle(color: C.muted)),
+    const SizedBox(height: 16),
+    ...candidates.map((c) => Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: SoftCard(
+        onTap: () => setState(() {
+          chosen = c.species;
+          _nick.text = c.species.name.split(' ').first;
+          phase = Phase.details;
+        }),
+        child: Row(children: [
+          HealthRing(value: c.confidence, color: C.moss, size: 52, child: Text('${(c.confidence * 100).round()}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13))),
+          const SizedBox(width: 14),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(c.species.name, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+            Text(c.species.sci, style: const TextStyle(fontStyle: FontStyle.italic, color: C.muted, fontSize: 13)),
+          ])),
+          const Icon(Icons.chevron_right, color: C.muted),
+        ]),
+      ),
+    )),
+    const SizedBox(height: 6),
+    OutlinedButton(onPressed: _retake, child: const Text('None of these, retake photo')),
+  ]);
+
+  // ---------- details ----------
+  Widget _details() {
+    final s = chosen!;
+    final blocked = widget.app.safetyOn && s.toxic;
+    return ListView(padding: const EdgeInsets.fromLTRB(20, 8, 20, 24), children: [
+      Text(s.name, style: Theme.of(context).textTheme.headlineSmall),
+      Text(s.sci, style: const TextStyle(fontStyle: FontStyle.italic, color: C.muted)),
+      const SizedBox(height: 14),
+      SoftCard(color: C.sage, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Light: ${s.light}'),
+        const SizedBox(height: 4),
+        Text('Water: ${s.water}'),
+        const SizedBox(height: 4),
+        Text('Humidity: ${s.humidity}'),
+      ])),
+      if (blocked) ...[
+        const SizedBox(height: 10),
+        SoftCard(
+          color: C.amber.withValues(alpha: 0.13),
+          child: Row(children: [
+            const Icon(Icons.warning_amber_rounded, color: C.amber),
+            const SizedBox(width: 10),
+            Expanded(child: Text('${s.toxicNote} Keep it on a shelf or table, away from the floor.')),
+          ]),
+        ),
+      ],
+      const Title2('A few details we cannot see'),
+      TextField(controller: _nick, decoration: const InputDecoration(labelText: 'Nickname')),
+      const SizedBox(height: 12),
+      Row(children: [
+        Expanded(child: TextField(controller: _height, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Height (cm)'))),
+        const SizedBox(width: 12),
+        Expanded(child: TextField(controller: _pot, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Pot width (cm)'))),
+      ]),
+      const SizedBox(height: 12),
+      DropdownButtonFormField<String>(
+        initialValue: _spot,
+        decoration: const InputDecoration(labelText: 'Where will it live?'),
+        items: spots.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+        onChanged: (v) => setState(() => _spot = v ?? _spot),
+      ),
+      const SizedBox(height: 22),
+      FilledButton(onPressed: _savePlant, child: const Text('Add to my garden')),
+    ]);
+  }
+
+  // ---------- diagnosis ----------
+  Widget _diagnosis() {
+    final d = diagnosis!;
+    final col = d.healthy ? C.moss : C.clay;
+    return ListView(padding: const EdgeInsets.fromLTRB(20, 8, 20, 24), children: [
+      ClipRRect(borderRadius: BorderRadius.circular(22), child: AspectRatio(aspectRatio: 16 / 9, child: Image.file(photo!, fit: BoxFit.cover))),
+      const SizedBox(height: 16),
+      Row(children: [
+        Expanded(child: Text(d.healthy ? 'Looking healthy' : d.condition, style: Theme.of(context).textTheme.headlineSmall)),
+        Pill('${(d.confidence * 100).round()}% sure', col),
+      ]),
+      const SizedBox(height: 12),
+      SoftCard(child: Text(d.advice, style: const TextStyle(height: 1.45))),
+      const SizedBox(height: 22),
+      FilledButton(
+        onPressed: () {
+          widget.app.logCheckup(widget.checkupFor!, d);
+          Navigator.of(context).pop();
         },
+        child: Text(d.healthy ? 'Save check-in' : 'Save and start recovery plan'),
       ),
-    );
+    ]);
   }
 }
 
-class PlantDetailProfileScreen extends StatelessWidget {
-  final PlantSpecimen plant;
-  const PlantDetailProfileScreen({super.key, required this.plant});
-
+/// Corner brackets that show where to place the plant.
+class _FramePainter extends CustomPainter {
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(plant.commonName),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // 1. Biological Needs & Pet/Child Toxicity Card
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              plant.commonName,
-                              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                            ),
-                            Text(
-                              plant.scientificName,
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontStyle: FontStyle.italic,
-                                color: Colors.black54,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: plant.isToxicToPetsOrKids
-                              ? Colors.red.shade50
-                              : Colors.green.shade50,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: plant.isToxicToPetsOrKids ? Colors.red : Colors.green,
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              plant.isToxicToPetsOrKids ? Icons.pets : Icons.verified_user,
-                              size: 16,
-                              color: plant.isToxicToPetsOrKids
-                                  ? Colors.red.shade800
-                                  : Colors.green.shade800,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              plant.isToxicToPetsOrKids ? 'TOXIC SPECIES' : 'PET/CHILD SAFE',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                color: plant.isToxicToPetsOrKids
-                                    ? Colors.red.shade800
-                                    : Colors.green.shade800,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const Divider(height: 24),
-                  const Text(
-                    'Auto-Populated Biological Requirements:',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  Text('• Ideal Solar DLI: ${plant.minDLI} – ${plant.maxDLI} mol/m²/day'),
-                  Text('• Target Relative Humidity: ${plant.idealHumidityPercent}%'),
-                  Text('• Hydration Rule: ${plant.wateringRule}'),
-                  Text('• Current Twin Position: Grid (${plant.gridX}, ${plant.gridY}) • ${plant.elevation.label}'),
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: plant.isToxicToPetsOrKids
-                          ? Colors.red.shade50
-                          : Colors.green.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      plant.toxicityWarning,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: plant.isToxicToPetsOrKids
-                            ? Colors.red.shade900
-                            : Colors.green.shade900,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // 2. Finite State Machine (FSM) Status & Photo Checkup Countdown
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Finite State Machine (FSM) & Checkup Timeline',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: plant.currentFSMState.color.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: plant.currentFSMState.color),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(plant.currentFSMState.icon, color: plant.currentFSMState.color, size: 28),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Current State: ${plant.currentFSMState.label}',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: plant.currentFSMState.color,
-                                ),
-                              ),
-                              Text(
-                                'Next Required CNN Photo Checkup in: ${plant.hoursUntilNextPhotoCheckup} hours '
-                                    '(Fragility Cadence: Every ${plant.currentFSMState.photoCheckupIntervalDays}d)',
-                                style: const TextStyle(fontSize: 12.5),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  const Text(
-                    'Canopy Greenness & Visual Log:',
-                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5),
-                  ),
-                  const SizedBox(height: 8),
-                  ...plant.checkupTimeline.map((log) => Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          width: 78,
-                          child: Text(
-                            log.date,
-                            style: const TextStyle(fontSize: 12, color: Colors.black54),
-                          ),
-                        ),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: LinearProgressIndicator(
-                                      value: log.canopyGreennessIndex,
-                                      minHeight: 7,
-                                      backgroundColor: Colors.grey.shade200,
-                                      color: log.stateAtLog.color,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    '${(log.canopyGreennessIndex * 100).toInt()}% Green',
-                                    style: const TextStyle(
-                                      fontSize: 11.5,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 2),
-                              Text(log.note, style: const TextStyle(fontSize: 12)),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  )),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // 3. CNN Diagnostic History (Pests, Diseases, Sunburn)
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'CNN Vision Diagnostic History & Treatments',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 10),
-                  ...plant.diagnosticHistory.map((diag) => Container(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade50,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.grey.shade300),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                diag.condition,
-                                style: const TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                            Chip(
-                              visualDensity: VisualDensity.compact,
-                              label: Text(
-                                diag.resolved ? 'Resolved' : 'Active Regimen',
-                                style: const TextStyle(fontSize: 11),
-                              ),
-                              backgroundColor: diag.resolved
-                                  ? Colors.green.shade100
-                                  : Colors.amber.shade100,
-                            ),
-                          ],
-                        ),
-                        Text(
-                          'Detected: ${diag.date} • CNN Confidence: ${(diag.cnnConfidence * 100).toStringAsFixed(1)}%',
-                          style: const TextStyle(fontSize: 12, color: Colors.black54),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          'Protocol: ${diag.treatmentProtocol}',
-                          style: const TextStyle(fontSize: 12.5),
-                        ),
-                      ],
-                    ),
-                  )),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
+  void paint(Canvas c, Size s) {
+    final r = RRect.fromRectAndRadius(
+      Rect.fromCenter(center: s.center(Offset.zero), width: s.width * 0.8, height: s.height * 0.6),
+      const Radius.circular(26),
     );
+    final dim = Path()..addRect(Offset.zero & s)..addRRect(r)..fillType = PathFillType.evenOdd;
+    c.drawPath(dim, Paint()..color = Colors.black.withValues(alpha: 0.28));
+    c.drawRRect(r, Paint()..style = PaintingStyle.stroke..strokeWidth = 2.5..color = C.sprout.withValues(alpha: 0.9));
   }
-}
-
-// ============================================================================
-// FEATURE 5: SETTINGS, PRIVACY, SPATIAL DATA & LUX SENSOR CALIBRATION
-// ============================================================================
-class SettingsPrivacyScreen extends StatefulWidget {
-  final AppStateController appState;
-  const SettingsPrivacyScreen({super.key, required this.appState});
 
   @override
-  State<SettingsPrivacyScreen> createState() => _SettingsPrivacyScreenState();
-}
-
-class _SettingsPrivacyScreenState extends State<SettingsPrivacyScreen> {
-  double _simulatedPhoneLuxReading = 12000.0;
-
-  @override
-  Widget build(BuildContext context) {
-    final app = widget.appState;
-    return Scaffold(
-      appBar: AppBar(title: const Text('Settings, Spatial Data & Calibration')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // 1. Granular Notification Preferences
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Granular Notification Preferences',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Mute Routine Watering Reminders'),
-                    subtitle: const Text('Silences standard low-priority hydration pings'),
-                    value: app.muteRoutineWatering,
-                    onChanged: (v) {
-                      app.muteRoutineWatering = v;
-                      app.triggerChange();
-                    },
-                  ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Critical Seasonal Relocation Alerts'),
-                    subtitle: const Text('Notify when solar declination shifts DLI out of bounds'),
-                    value: app.enableSeasonalRelocationAlerts,
-                    onChanged: (v) {
-                      app.enableSeasonalRelocationAlerts = v;
-                      app.triggerChange();
-                    },
-                  ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('FSM "Recovery Mode" Emergency Triggers'),
-                    subtitle: const Text('High-priority alerts for CNN pathology or acute stress'),
-                    value: app.enableRecoveryModeTriggers,
-                    onChanged: (v) {
-                      app.enableRecoveryModeTriggers = v;
-                      app.triggerChange();
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // 2. Spatial Data Management (AR Scanner & Obstruction Skyline)
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Spatial Data & AR Room Mesh Management',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'External Skyline Obstruction Mask: ${(app.externalObstructionFactor * 100).toInt()}% Blocked',
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                  ),
-                  Slider(
-                    value: app.externalObstructionFactor,
-                    min: 0.0,
-                    max: 0.85,
-                    divisions: 17,
-                    label: '${(app.externalObstructionFactor * 100).toInt()}%',
-                    onChanged: (v) {
-                      app.externalObstructionFactor = v;
-                      app.triggerChange();
-                    },
-                  ),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      FilledButton.tonalIcon(
-                        icon: const Icon(Icons.radar),
-                        label: const Text('Rescan Room with AR Scanner'),
-                        onPressed: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('ARCore/ARKit LiDAR Mesh Rescan initiated... Furniture anchors updated.'),
-                            ),
-                          );
-                        },
-                      ),
-                      OutlinedButton.icon(
-                        icon: const Icon(Icons.delete_forever, color: Colors.red),
-                        label: const Text('Delete 3D Room Mapping Data', style: TextStyle(color: Colors.red)),
-                        onPressed: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              backgroundColor: Colors.red,
-                              content: Text('3D Point-Cloud & Spatial Mesh purged from local & cloud storage.'),
-                            ),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // 3. Hardware Lux Sensor Calibration
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Physical Lux Sensor Calibration Override',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'Place your phone flat at window level to benchmark real-world ambient Lux against the simulated SunCalc DLI grid.',
-                    style: TextStyle(fontSize: 12.5, color: Colors.black54),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Live Photodiode Reading: ${_simulatedPhoneLuxReading.toInt()} Lux',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      Chip(
-                        label: Text(
-                          'Calibration Factor: ${app.sensorCalibrationMultiplier.toStringAsFixed(2)}x',
-                        ),
-                      ),
-                    ],
-                  ),
-                  Slider(
-                    value: _simulatedPhoneLuxReading,
-                    min: 2000,
-                    max: 25000,
-                    divisions: 46,
-                    onChanged: (v) {
-                      setState(() => _simulatedPhoneLuxReading = v);
-                    },
-                  ),
-                  FilledButton.icon(
-                    icon: const Icon(Icons.sensors),
-                    label: const Text('Calibrate Simulated DLI Grid Now'),
-                    onPressed: () {
-                      app.calibrateLuxSensor(_simulatedPhoneLuxReading);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            'DLI Grid recalibrated to ${app.sensorCalibrationMultiplier.toStringAsFixed(2)}x using ${_simulatedPhoneLuxReading.toInt()} Lux reference.',
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  bool shouldRepaint(covariant CustomPainter old) => false;
 }
