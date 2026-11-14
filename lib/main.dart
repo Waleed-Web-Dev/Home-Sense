@@ -11,6 +11,8 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'package:dio/dio.dart';
+import 'apiClient.dart';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
@@ -626,10 +628,31 @@ class _AuthScreenState extends State<AuthScreen> {
   Future<void> _submit() async {
     if (!_form.currentState!.validate()) return;
     setState(() => _busy = true);
-    await Future.delayed(const Duration(milliseconds: 700)); // TODO: call FastAPI auth
-    if (mounted) widget.app.signIn(_email.text.trim());
-  }
 
+    try {
+      final token = await ApiClient().authenticate(
+        email: _email.text.trim(),
+        password: _pass.text,
+        isRegister: _register,
+      );
+
+      if (mounted) {
+        widget.app.signIn(_email.text.trim());
+      }
+    } on DioException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.red.shade800,
+            behavior: SnackBarBehavior.floating,
+            content: Text(e.error?.toString() ?? 'Could not connect to server'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
@@ -1723,3 +1746,5 @@ class _FramePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant CustomPainter old) => false;
 }
+
+

@@ -13,7 +13,7 @@ import 'package:homesense/main.dart';
 void main() {
   testWidgets('Counter increments smoke test', (WidgetTester tester) async {
     // Build our app and trigger a frame.
-    await tester.pumpWidget(const BotanicalDigitalTwinApp());
+    await tester.pumpWidget(const FloraTwinApp());
 
     // Verify that our counter starts at 0.
     expect(find.text('0'), findsOneWidget);
