@@ -140,13 +140,49 @@ enum HealthState {
 
 enum Sensitivity { hardy, sensitive }
 
+
 class Species {
-  final String name, sci, light, water, humidity, toxicNote;
+  final String name;
+  final String sci;
+  final String light;
+  final String water;
+  final String humidity;
   final bool toxic;
+  final String toxicNote;
   final Sensitivity sensitivity;
-  const Species(this.name, this.sci, this.light, this.water, this.humidity, this.toxic,
-      this.toxicNote, this.sensitivity);
+  final String? speciesId; // Added to track backend ID
+
+  const Species(
+      this.name,
+      this.sci,
+      this.light,
+      this.water,
+      this.humidity,
+      this.toxic,
+      this.toxicNote,
+      this.sensitivity, [
+        this.speciesId,
+      ]);
+
+  factory Species.fromJson(Map<String, dynamic> json) {
+    final sensStr = (json['sensitivity_level'] ?? 'hardy').toString().toLowerCase();
+    final sens = sensStr == 'sensitive' ? Sensitivity.sensitive : Sensitivity.hardy;
+
+    return Species(
+      json['common_name'] ?? json['name'] ?? 'Unknown Plant',
+      json['scientific_name'] ?? json['sci'] ?? '',
+      json['light_type'] ?? 'Bright indirect light',
+      'Check schedule after adding',
+      '50–60%',
+      json['is_toxic_to_pets'] ?? false,
+      'Keep away from pets and children if toxic.',
+      sens,
+      json['species_id']?.toString(),
+    );
+  }
 }
+
+
 
 const kSpecies = <Species>[
   Species('Monstera', 'Monstera deliciosa', 'Bright indirect, 2–3 h soft sun', 'When top 5 cm of soil is dry',
@@ -229,15 +265,42 @@ class RelocationAlert {
 class Candidate {
   final Species species;
   final double confidence;
+
   const Candidate(this.species, this.confidence);
+
+  factory Candidate.fromJson(Map<String, dynamic> json) {
+    return Candidate(
+      Species.fromJson(json['species'] ?? json),
+      (json['confidence'] ?? 0.0).toDouble(),
+    );
+  }
 }
 
+
 class Diagnosis {
-  final String condition, advice;
+  final String condition;
   final double confidence;
+  final String advice;
   final bool healthy;
-  const Diagnosis(this.condition, this.confidence, this.advice, this.healthy);
+
+  const Diagnosis(
+      this.condition,
+      this.confidence,
+      this.advice,
+      this.healthy,
+      );
+
+  factory Diagnosis.fromJson(Map<String, dynamic> json) {
+    return Diagnosis(
+      json['condition'] ?? 'Unknown issue',
+      (json['confidence'] ?? 0.0).toDouble(),
+      json['advice'] ?? '',
+      json['healthy'] ?? false,
+    );
+  }
 }
+
+
 
 // ============================================================================
 // APP STATE
@@ -1363,6 +1426,7 @@ class _ScanFlowState extends State<ScanFlow> {
   Diagnosis? diagnosis;
   Timer? _tipTimer;
   int _tip = 0;
+  String? _tempImagePath;
 
   final _nick = TextEditingController();
   final _height = TextEditingController();
@@ -1445,25 +1509,51 @@ class _ScanFlowState extends State<ScanFlow> {
   }
 
   Future<void> _submitPhoto() async {
+    if (photo == null) return;
     setState(() => phase = Phase.thinking);
-    if (isCheckup) {
-      final d = await PlantAI.diagnose(photo!, widget.checkupFor!);
-      if (mounted) setState(() { diagnosis = d; phase = Phase.diagnosis; });
-    } else {
-      final list = await PlantAI.identify(photo!);
-      if (!mounted) return;
-      setState(() {
-        candidates = list;
-        if (list.first.confidence >= 0.75) {
-          chosen = list.first.species;
-          _nick.text = chosen!.name.split(' ').first;
-          phase = Phase.details;
-        } else {
-          phase = Phase.pick; // top-3 picker when unsure
+
+    try {
+      if (isCheckup) {
+        final json = await ApiClient().diagnosePlantImage(
+          filePath: photo!.path,
+          plantId: widget.checkupFor!.id.toString(),
+        );
+        if (!mounted) return;
+        setState(() {
+          diagnosis = Diagnosis.fromJson(json);
+          phase = Phase.diagnosis;
+        });
+      } else {
+        final json = await ApiClient().uploadPlantImage(photo!.path);
+        final List rawList = json['candidates'] ?? [];
+        _tempImagePath = json['temp_image_path'];
+        final list = rawList.map((e) => Candidate.fromJson(e)).toList();
+
+        if (!mounted) return;
+        if (list.isEmpty) {
+          setState(() => phase = Phase.review);
+          toast(context, 'No matching plant found. Try a closer photo.', error: true);
+          return;
         }
-      });
+
+        setState(() {
+          candidates = list;
+          if (list.first.confidence >= 0.75) {
+            chosen = list.first.species;
+            _nick.text = chosen!.name.split(' ').first;
+            phase = Phase.details;
+          } else {
+            phase = Phase.pick;
+          }
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => phase = Phase.review);
+      toast(context, 'Could not reach server. Please try again.', error: true);
     }
   }
+
 
   void _retake() => setState(() {
     photo = null;
@@ -1471,15 +1561,37 @@ class _ScanFlowState extends State<ScanFlow> {
     phase = Phase.capture;
   });
 
-  void _savePlant() {
+  Future<void> _savePlant() async {
     final h = double.tryParse(_height.text) ?? 30;
-    final p = double.tryParse(_pot.text) ?? 15;
+    final pCm = double.tryParse(_pot.text) ?? 15;
+    final pInches = pCm / 2.54; // Convert cm input to pot_size_inches
     final name = _nick.text.trim().isEmpty ? chosen!.name : _nick.text.trim();
-    widget.app.addPlant(chosen!, name, h, p, _spot);
-    final m = ScaffoldMessenger.of(context);
-    Navigator.of(context).pop();
-    m.showSnackBar(SnackBar(behavior: SnackBarBehavior.floating, backgroundColor: C.fern, content: Text('$name added to your garden')));
+
+    try {
+      await ApiClient().confirmAndAddPlant(
+        selectedSpeciesId: chosen!.speciesId ?? '',
+        nickname: name,
+        heightCm: h,
+        potSizeInches: double.parse(pInches.toStringAsFixed(1)),
+        currentRoom: _spot,
+        tempImagePath: _tempImagePath ?? '',
+      );
+
+      widget.app.addPlant(chosen!, name, h, pCm, _spot);
+      if (!mounted) return;
+      final m = ScaffoldMessenger.of(context);
+      Navigator.of(context).pop();
+      m.showSnackBar(SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: C.fern,
+        content: Text('$name added to your garden'),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      toast(context, 'Failed to save plant. Please try again.', error: true);
+    }
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -1695,7 +1807,7 @@ class _ScanFlowState extends State<ScanFlow> {
       ]),
       const SizedBox(height: 12),
       DropdownButtonFormField<String>(
-        initialValue: _spot,
+        value: _spot, // changed from initialValue
         decoration: const InputDecoration(labelText: 'Where will it live?'),
         items: spots.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
         onChanged: (v) => setState(() => _spot = v ?? _spot),
