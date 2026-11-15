@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:geolocator/geolocator.dart';
 
 class ApiClient {
   static final ApiClient _instance = ApiClient._internal();
@@ -67,24 +68,30 @@ class ApiClient {
     required String email,
     required String password,
     required bool isRegister,
+    required String fullName, // Strictly required parameter
   }) async {
+    if (isRegister && fullName.trim().isEmpty) {
+      throw ArgumentError('Full name is required for registration.');
+    }
+
     final String path = isRegister ? '/auth/signup' : '/auth/login';
 
     final Map<String, dynamic> payload = isRegister
         ? {
       'email': email,
       'password': password,
-      'full_name': "Test Name",
-      'gps_lat': 0,
-      'gps_lon': 0,
-      'city_name': "Isb",
+      'full_name': fullName.trim(), // Guaranteed non-empty string
+      'gps_lat': null,
+      'gps_lon': null,
+      'city_name': null,
       'has_pets': false,
       'has_children': false,
     }
         : {
-      'username': email, // FastAPI OAuth2 expects 'username'
+      'username': email,
       'password': password,
     };
+
 
     final Response response = await dio.post(
       path,
@@ -102,6 +109,15 @@ class ApiClient {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('jwt_token', token);
       await prefs.setString('user_email', email);
+
+      // Track whether the user already has a saved home location
+      if (isRegister) {
+        await prefs.setBool('has_home_location', false);
+      } else if (data is Map && data['user'] is Map) {
+        final hasLoc = data['user']['gps_lat'] != null;
+        await prefs.setBool('has_home_location', hasLoc);
+      }
+
       return token;
     }
 
@@ -153,6 +169,21 @@ class ApiClient {
     required String currentRoom,
     required String tempImagePath,
   }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final bool hasHomeLocation = prefs.getBool('has_home_location') ?? false;
+
+    double? lat;
+    double? lon;
+
+    // Fetch GPS only if the user's home location has not been set yet
+    if (!hasHomeLocation) {
+      final pos = await LocationHelper.getCurrentLocation();
+      if (pos != null) {
+        lat = pos.latitude;
+        lon = pos.longitude;
+      }
+    }
+
     final Response response = await dio.post(
       '/plants/confirm-add',
       data: {
@@ -162,12 +193,20 @@ class ApiClient {
         'pot_size_inches': potSizeInches,
         'current_room': currentRoom,
         'temp_image_path': tempImagePath,
+        if (lat != null) 'gps_lat': lat,
+        if (lon != null) 'gps_lon': lon,
       },
       options: await _authHeaders(),
     );
 
+    // Mark home location as saved so future plants skip GPS lookup
+    if (!hasHomeLocation && lat != null && lon != null) {
+      await prefs.setBool('has_home_location', true);
+    }
+
     return Map<String, dynamic>.from(response.data);
   }
+
 
   /// Matches @router.post("/diagnose")
   Future<Map<String, dynamic>> diagnosePlantImage({

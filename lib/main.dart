@@ -677,12 +677,14 @@ class AuthScreen extends StatefulWidget {
 
 class _AuthScreenState extends State<AuthScreen> {
   final _form = GlobalKey<FormState>();
+  final _name = TextEditingController(); // 1. Added Full Name controller
   final _email = TextEditingController();
   final _pass = TextEditingController();
   bool _register = false, _hide = true, _busy = false;
 
   @override
   void dispose() {
+    _name.dispose(); // 2. Dispose Full Name controller
     _email.dispose();
     _pass.dispose();
     super.dispose();
@@ -697,6 +699,7 @@ class _AuthScreenState extends State<AuthScreen> {
         email: _email.text.trim(),
         password: _pass.text,
         isRegister: _register,
+        fullName: _register ? _name.text.trim() : '',
       );
 
       if (mounted) {
@@ -716,6 +719,7 @@ class _AuthScreenState extends State<AuthScreen> {
       if (mounted) setState(() => _busy = false);
     }
   }
+
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
@@ -764,6 +768,25 @@ class _AuthScreenState extends State<AuthScreen> {
                       onSelectionChanged: (s) => setState(() => _register = s.first),
                     ),
                     const SizedBox(height: 16),
+
+                    // 4. Separate Full Name input box shown only on "Create account"
+                    if (_register) ...[
+                      TextFormField(
+                        controller: _name,
+                        keyboardType: TextInputType.name,
+                        textCapitalization: TextCapitalization.words,
+                        autofillHints: const [AutofillHints.name],
+                        decoration: const InputDecoration(
+                          labelText: 'Full Name',
+                          prefixIcon: Icon(Icons.person_outline),
+                        ),
+                        validator: (v) => (_register && (v == null || v.trim().isEmpty))
+                            ? 'Enter your full name'
+                            : null,
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+
                     TextFormField(
                       controller: _email,
                       keyboardType: TextInputType.emailAddress,
@@ -818,6 +841,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
   Widget _blob(double s, Color c) => Container(width: s, height: s, decoration: BoxDecoration(color: c, shape: BoxShape.circle));
 }
+
 
 // ============================================================================
 // ONBOARDING: LOCATION + HOUSEHOLD SAFETY
