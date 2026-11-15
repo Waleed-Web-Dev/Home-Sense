@@ -414,11 +414,11 @@ class AppState extends ChangeNotifier {
     return t.nextAfter;
   }
 
-  void addPlant(Species s, String nick, double h, double pot, String spot) {
+  void addPlant(Species s, String nick, double h, double pot, String spot, String id) {
     plants.insert(
       0,
       Plant(
-        id: 'p${DateTime.now().millisecondsSinceEpoch}', species: s, nickname: nick,
+        id: id, species: s, nickname: nick,
         health: HealthState.thriving, heightCm: h, potCm: pot, spot: spot,
         daysSinceCheckup: 0, checkups: [const CheckupEntry('Today', 0.9, 'First photo added.')],
         history: ['Today: Added to your garden'],
@@ -1592,7 +1592,7 @@ class _ScanFlowState extends State<ScanFlow> {
     final name = _nick.text.trim().isEmpty ? chosen!.name : _nick.text.trim();
 
     try {
-      await ApiClient().confirmAndAddPlant(
+      final res = await ApiClient().confirmAndAddPlant(
         selectedSpeciesId: chosen!.speciesId ?? '',
         nickname: name,
         heightCm: h,
@@ -1601,7 +1601,10 @@ class _ScanFlowState extends State<ScanFlow> {
         tempImagePath: _tempImagePath ?? '',
       );
 
-      widget.app.addPlant(chosen!, name, h, pCm, _spot);
+
+      final String mongoPlantId = res['plant_id']?.toString() ?? '';
+      widget.app.addPlant(chosen!, name, h, pCm, _spot, mongoPlantId);
+
       if (!mounted) return;
       final m = ScaffoldMessenger.of(context);
       Navigator.of(context).pop();
