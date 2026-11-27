@@ -277,17 +277,6 @@ class ApiClient {
     );
   }
 
-  /// GET /plants/my-plants
-  Future<List<PlantScheduleData>> fetchMyPlants() async {
-    final Response response = await dio.get(
-      '/plants/my-plants',
-      options: await _authHeaders(),
-    );
-    final list = response.data as List<dynamic>;
-    return list
-        .map((e) => PlantScheduleData.fromJson(Map<String, dynamic>.from(e)))
-        .toList();
-  }
 
   /// GET /plants/{plant_id}
   Future<PlantScheduleData> fetchPlantById(String plantId) async {
