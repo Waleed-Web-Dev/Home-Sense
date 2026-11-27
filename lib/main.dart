@@ -306,6 +306,8 @@ class Diagnosis {
 // ============================================================================
 // APP STATE
 // ============================================================================
+
+//___________________Fetching the Plant________________
 class AppState extends ChangeNotifier {
   bool signedIn = false, locationGranted = false, onboarded = false;
   String email = '';
@@ -319,33 +321,70 @@ class AppState extends ChangeNotifier {
   bool get safetyOn => hasPets || hasKids;
   bool get northern => lat >= 0;
 
+  // 1. Constructor runs automatically when AppState is created at app startup
+  AppState() {
+    loadUserPlants();
+  }
+
+  // 2. Public method so you can ALSO call `appState.loadUserPlants()` right after login!
+  //-------------------Now printing on terminal to check the actual issue---------------
+  Future<void> loadUserPlants() async {
+    try {
+      final plantsData = await ApiClient().fetchMyPlants();
+      debugPrint('🌱 [LOAD PLANTS] Raw count from backend: ${plantsData.length}');
+
+      final parsed = plantsData.map((json) => _plantFromBackendJson(json)).toList();
+      plants.clear();
+      plants.addAll(parsed);
+      debugPrint('🌱 [LOAD PLANTS] Parsed plants in AppState: ${plants.length}');
+      notifyListeners();
+    } catch (e, stack) {
+      debugPrint('❌ [LOAD PLANTS CRASH] $e');
+      debugPrint('$stack');
+    }
+  }
+
+  // 3. Helper to convert FastAPI UserPlant JSON into your existing `Plant(...)` model
+  Plant _plantFromBackendJson(Map<String, dynamic> json) {
+    final backendName = (json['common_name'] ?? '').toString().toLowerCase();
+    final backendScientific = (json['scientific_name'] ?? '').toString().toLowerCase();
+
+    final matchedSpecies = kSpecies.firstWhere(
+          (s) =>
+      s.name.toLowerCase() == backendName ||
+          s.name.toLowerCase() == backendScientific,
+      orElse: () => kSpecies[0],
+    );
+
+    final double height = ((json['height_cm'] ?? 20) as num).toDouble();
+    final double potInches = ((json['pot_size_inches'] ?? 6) as num).toDouble();
+
+    return Plant(
+      id: (json['_id'] ?? json['id'] ?? '').toString(),
+      species: matchedSpecies,
+      nickname: (json['nickname'] ?? json['common_name'] ?? 'Plant').toString(),
+      health: HealthState.thriving,
+      heightCm: height,
+      potCm: (potInches * 2.54),
+      spot: (json['placement']?['room_name'] ?? 'Indoor').toString(),
+      daysSinceCheckup: 0,
+      checkups: const [],
+      history: List<String>.from(
+        (json['history_logs'] as List? ?? []).map(
+              (e) => e is Map ? (e['notes'] ?? '').toString() : e.toString(),
+        ),
+      ),
+    );
+  }
+
+
+
   late final List<Plant> plants = [
-    Plant(
-      id: 'p1', species: kSpecies[0], nickname: 'Monty', health: HealthState.thriving,
-      heightCm: 85, potCm: 24, spot: 'South window', daysSinceCheckup: 13,
-      checkups: const [
-        CheckupEntry('1 Nov', 0.94, 'New split leaf unfurled.'),
-        CheckupEntry('18 Oct', 0.91, 'Stable colour across the canopy.'),
-      ],
-      history: ['Aug 14: Thrips treated with spinosad, resolved'],
-    ),
-    Plant(
-      id: 'p2', species: kSpecies[3], nickname: 'Orbi', health: HealthState.recovering,
-      heightCm: 40, potCm: 18, spot: 'East window', daysSinceCheckup: 2,
-      activeIssue: 'Tip burn from tap water and dry air',
-      checkups: const [
-        CheckupEntry('11 Nov', 0.68, 'Brown leaf edges spreading.'),
-        CheckupEntry('5 Nov', 0.74, 'Crisp edges after humidity drop.'),
-      ],
-      history: ['Nov 9: Switched to distilled water, moved out of afternoon sun'],
-    ),
-    Plant(
-      id: 'p3', species: kSpecies[4], nickname: 'Fig', health: HealthState.attention,
-      heightCm: 130, potCm: 30, spot: 'Hallway shelf', daysSinceCheckup: 5,
-      checkups: const [CheckupEntry('7 Nov', 0.84, 'Slowing down as days shorten.')],
-      history: ['Jun 21: Botrytis leaf spot treated with copper fungicide, resolved'],
-    ),
+    // ... your existing list
   ];
+
+  //----------------------made changes above-------------
+
 
   late final List<CareTask> tasks = [
     CareTask(
@@ -376,6 +415,7 @@ class AppState extends ChangeNotifier {
 
   void signIn(String e) {
     signedIn = true;
+    loadUserPlants();
     email = e;
     notifyListeners();
   }
@@ -1457,7 +1497,14 @@ class _ScanFlowState extends State<ScanFlow> {
   final _height = TextEditingController();
   final _pot = TextEditingController();
   String _spot = 'South window';
-  static const spots = ['South window', 'East window', 'West window', 'North window', 'Bright room, no window', 'Hallway'];
+  static const spots = [
+    'South window',
+    'East window',
+    'West window',
+    'North window',
+    'Bright room, no window',
+    'Hallway'
+  ];
   static const tips = [
     'Fill about half the frame with leaves.',
     'Use daylight and avoid strong backlight.',
@@ -1466,14 +1513,17 @@ class _ScanFlowState extends State<ScanFlow> {
 
   bool get isCheckup => widget.checkupFor != null;
 
+
   @override
   void initState() {
     super.initState();
     _initCamera();
     _tipTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      if (mounted && phase == Phase.capture) setState(() => _tip = (_tip + 1) % tips.length);
+      if (mounted && phase == Phase.capture) setState(() =>
+      _tip = (_tip + 1) % tips.length);
     });
   }
+
 
   @override
   void dispose() {

@@ -219,6 +219,24 @@ class ApiClient {
   }
 
 
+  //----------------Fetching Plants---------------
+  Future<List<Map<String, dynamic>>> fetchMyPlants() async {
+    try {
+      final Response response = await dio.get(
+        '/plants/my-plants', // <-- Matches your existing FastAPI route
+        options: await _authHeaders(),
+      );
+      // Unwrap the "plants" array from {"count": ..., "plants": [...]}
+      final List<dynamic> list = response.data['plants'] ?? [];
+      return List<Map<String, dynamic>>.from(list);
+    } on DioException catch (e) {
+      debugPrint('❌ [FETCH PLANTS ERROR] ${e.response?.statusCode}: ${e.response?.data}');
+      return [];
+    }
+  }
+//--------------------------------------------------------------------------------
+
+
   /// Matches @router.post("/diagnose")
   Future<Map<String, dynamic>> diagnosePlantImage({
     required String filePath,
