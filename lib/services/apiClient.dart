@@ -1,14 +1,20 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:homesense/location_helper.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 
 class ApiClient {
   static final ApiClient _instance = ApiClient._internal();
   factory ApiClient() => _instance;
 
   late final Dio dio;
+  static final RegExp _mongoIdRegex = RegExp(r'^[a-fA-F0-9]{24}$');
 
   static String get baseUrl {
     if (kIsWeb || defaultTargetPlatform == TargetPlatform.windows) {
@@ -64,6 +70,8 @@ class ApiClient {
     );
   }
 
+  bool isValidMongoId(String id) => _mongoIdRegex.hasMatch(id);
+
   Future<String> authenticate({
     required String email,
     required String password,
@@ -91,7 +99,6 @@ class ApiClient {
       'username': email,
       'password': password,
     };
-
 
     final Response response = await dio.post(
       path,
@@ -122,11 +129,15 @@ class ApiClient {
     }
 
     if (isRegister) {
-      return authenticate(email: email, password: password, isRegister: false);
+      return authenticate(
+        email: email,
+        password: password,
+        isRegister: false,
+        fullName: fullName,
+      );
     }
     return '';
   }
-
 
   // 2. PLANT IDENTIFICATION & INVENTORY ENDPOINTS
   Future<Options> _authHeaders() async {
@@ -157,7 +168,6 @@ class ApiClient {
 
     return Map<String, dynamic>.from(response.data);
   }
-
 
 
   /// Matches @router.post("/confirm-add")
@@ -207,7 +217,7 @@ class ApiClient {
     return Map<String, dynamic>.from(response.data);
   }
 
-
+  /// Matches @router.post("/diagnose")
   /// Matches @router.post("/diagnose")
   Future<Map<String, dynamic>> diagnosePlantImage({
     required String filePath,
@@ -232,4 +242,73 @@ class ApiClient {
   }
 
 
+  // 3. NOTIFICATION & SCHEDULE SYNC ENDPOINTS
+
+  /// POST /users/fcm-token
+  Future<void> registerFcmToken(String fcmToken) async {
+    await dio.post(
+      '/users/fcm-token',
+      data: {'fcm_token': fcmToken},
+      options: await _authHeaders(),
+    );
+  }
+
+  /// GET /plants/my-plants
+  Future<List<PlantScheduleData>> fetchMyPlants() async {
+    final Response response = await dio.get(
+      '/plants/my-plants',
+      options: await _authHeaders(),
+    );
+    final list = response.data as List<dynamic>;
+    return list
+        .map((e) => PlantScheduleData.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  /// GET /plants/{plant_id}
+  Future<PlantScheduleData> fetchPlantById(String plantId) async {
+    if (!isValidMongoId(plantId)) {
+      throw ArgumentError('Invalid 24-char MongoDB plant_id: $plantId');
+    }
+    final Response response = await dio.get(
+      '/plants/$plantId',
+      options: await _authHeaders(),
+    );
+    return PlantScheduleData.fromJson(Map<String, dynamic>.from(response.data));
+  }
+}
+
+class PlantScheduleData {
+  final String plantId; // Exact 24-char MongoDB ObjectId
+  final String name;
+  final String healthStatus; // Thriving | Needs Attention | Recovering
+  final DateTime? nextWaterDate;
+  final DateTime? nextNutritionDate;
+  final DateTime? nextCheckupDate;
+  final List<dynamic> historyLogs;
+
+  PlantScheduleData({
+    required this.plantId,
+    required this.name,
+    required this.healthStatus,
+    this.nextWaterDate,
+    this.nextNutritionDate,
+    this.nextCheckupDate,
+    this.historyLogs = const [],
+  });
+
+  factory PlantScheduleData.fromJson(Map<String, dynamic> json) {
+    DateTime? parseIso(dynamic val) =>
+        val is String && val.isNotEmpty ? DateTime.tryParse(val)?.toLocal() : null;
+
+    return PlantScheduleData(
+      plantId: (json['plant_id'] ?? json['_id'] ?? '').toString(),
+      name: (json['common_name'] ?? json['name'] ?? 'Unknown Plant').toString(),
+      healthStatus: (json['health_status'] ?? 'Thriving').toString(),
+      nextWaterDate: parseIso(json['next_water_date']),
+      nextNutritionDate: parseIso(json['next_nutrition_date']),
+      nextCheckupDate: parseIso(json['next_checkup_date']),
+      historyLogs: (json['history_logs'] as List<dynamic>?) ?? const [],
+    );
+  }
 }

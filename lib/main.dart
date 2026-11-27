@@ -12,17 +12,32 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'package:dio/dio.dart';
-import 'apiClient.dart';
 
 import 'package:camera/camera.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:homesense/services/apiClient.dart';
+import 'package:homesense/services/notification_service.dart';
 import 'package:image/image.dart' as img_lib;
 
-void main() {
+import 'dart:io';
+import 'package:image_picker/image_picker.dart';
+
+
+Future<void> main() async{
   WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+
+  await NotificationService.instance.initialize(
+    onDeepLink: _handleNotificationRoute,
+  );
+
   runApp(const FloraTwinApp());
+
 }
 
 // ============================================================================
@@ -1886,4 +1901,281 @@ class _FramePainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter old) => false;
 }
 
+final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
+final AppState globalAppState = AppState();
 
+
+Future<void> _handleNotificationRoute(String plantId, String actionType) async {
+  final nav = rootNavigatorKey.currentState;
+  if (nav == null) return;
+
+  final api = ApiClient();
+
+  // 1. Try local state first using your `Plant` model
+  Plant? specimen = globalAppState.plants
+      .cast<Plant?>()
+      .firstWhere((p) => p!.id == plantId, orElse: () => null);
+
+  // 2. If not in memory (e.g., app launched from terminated state), fetch from GET /plants/{plant_id}
+  if (specimen == null && api.isValidMongoId(plantId)) {
+    try {
+      final remote = await api.fetchPlantById(plantId);
+      await NotificationService.instance.schedulePlantFallbackAlarms(remote);
+
+      // Re-check state if your AppState has a refresh/load method, or pass the fetched plant
+      specimen = globalAppState.plants
+          .cast<Plant?>()
+          .firstWhere((p) => p!.id == plantId, orElse: () => null);
+    } catch (e) {
+      debugPrint('Failed to fetch deep-linked plant $plantId: $e');
+      return;
+    }
+  }
+
+  if (specimen == null) return;
+
+  // 3. Route to PlantDetailProfileScreen with the action_type banner/camera trigger
+  nav.push(MaterialPageRoute(
+    builder: (_) => PlantDetailProfileScreen(
+      plant: specimen!,
+      initialActionType: actionType, // 'WATER' | 'NUTRITION' | 'CHECKUP' | 'RELOCATE'
+    ),
+  ));
+}
+
+class PlantDetailProfileScreen extends StatefulWidget {
+  final Plant plant;
+  final String? initialActionType; // 'WATER', 'NUTRITION', 'CHECKUP', 'RELOCATE'
+
+  const PlantDetailProfileScreen({
+    super.key,
+    required this.plant,
+    this.initialActionType,
+  });
+
+  @override
+  State<PlantDetailProfileScreen> createState() =>
+      _PlantDetailProfileScreenState();
+}
+
+class _PlantDetailProfileScreenState extends State<PlantDetailProfileScreen> {
+  bool _isUploadingDiagnosis = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialActionType == 'CHECKUP') {
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _runDiagnosticCamera());
+    }
+  }
+
+  Future<void> _runDiagnosticCamera() async {
+    final picker = ImagePicker();
+    final XFile? photo = await picker.pickImage(
+      source: ImageSource.camera,
+      imageQuality: 85,
+    );
+    if (photo == null) return;
+
+    setState(() => _isUploadingDiagnosis = true);
+    try {
+      final responseMap = await ApiClient().diagnosePlantImage(
+        filePath: photo.path,
+        plantId: widget.plant.id,
+      );
+      final updated = PlantScheduleData.fromJson(responseMap);
+
+      // Reschedule local fallback alarms (+3d checkup if Recovery Mode triggered)
+      await NotificationService.instance.schedulePlantFallbackAlarms(updated);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Diagnosis complete. Status: ${updated.healthStatus}'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.red.shade800,
+          content: Text('Error: $e'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isUploadingDiagnosis = false);
+    }
+  }
+
+  Widget _buildActionBanner() {
+    switch (widget.initialActionType) {
+      case 'WATER':
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Card(
+            color: Colors.blue.shade50,
+            child: ListTile(
+              leading: const Icon(Icons.water_drop, color: Colors.blue),
+              title: Text('Watering Due: ${widget.plant.nickname}'),
+              subtitle: const Text('Hydrate soil thoroughly and log completion.'),
+            ),
+          ),
+        );
+      case 'NUTRITION':
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Card(
+            color: Colors.green.shade50,
+            child: ListTile(
+              leading: const Icon(Icons.science, color: Colors.green),
+              title: Text('Nutrition Due: ${widget.plant.nickname}'),
+              subtitle: const Text(
+                'Apply balanced liquid NPK fertilizer at half-strength.',
+              ),
+            ),
+          ),
+        );
+      case 'RELOCATE':
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Card(
+            color: Colors.amber.shade50,
+            child: ListTile(
+              leading: const Icon(Icons.wb_twilight, color: Colors.amber),
+              title: const Text('Relocation Recommended'),
+              subtitle: Text(
+                'Current spot: ${widget.plant.spot}. Solar shift or weather alert detected—adjust light placement.',
+              ),
+            ),
+          ),
+        );
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final plant = widget.plant;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(plant.nickname),
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _isUploadingDiagnosis ? null : _runDiagnosticCamera,
+        icon: _isUploadingDiagnosis
+            ? const SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        )
+            : const Icon(Icons.camera_alt),
+        label: const Text('AI Checkup'),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _buildActionBanner(),
+
+          // 1. Overview & Physical Specs Card
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    plant.nickname,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    plant.species.toString(),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontStyle: FontStyle.italic,
+                      color: Colors.black54,
+                    ),
+                  ),
+                  const Divider(height: 24),
+                  Text('• Placement Spot: ${plant.spot}'),
+                  Text('• Dimensions: ${plant.heightCm} cm tall • ${plant.potCm} cm pot'),
+                  Text('• Health State: ${plant.health.name}'),
+                  Text('• Days Since Last Checkup: ${plant.daysSinceCheckup} days'),
+                  if (plant.activeIssue != null && plant.activeIssue!.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        'Active Issue: ${plant.activeIssue}',
+                        style: TextStyle(
+                          color: Colors.red.shade900,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // 2. Checkup Entries (Newest First)
+          if (plant.checkups.isNotEmpty)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Checkup Timeline',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    ...plant.checkups.map((entry) => ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.photo_camera_back_outlined),
+                      title: Text(entry.toString()),
+                    )),
+                  ],
+                ),
+              ),
+            ),
+          const SizedBox(height: 16),
+
+          // 3. Care & Diagnostic History Logs (Newest First)
+          if (plant.history.isNotEmpty)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Care & Diagnostic History',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    ...plant.history.map((item) => Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text('• $item'),
+                    )),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
