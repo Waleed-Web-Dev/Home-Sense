@@ -21,7 +21,7 @@ class ApiClient {
       return 'http://127.0.0.1:8000';
     }
     // Replace with your laptop's IPv4 address from ipconfig:
-    return 'http://10.202.30.96:8000';
+    return 'http://10.202.26.84:8000';
   }
 
   ApiClient._internal() {
@@ -51,7 +51,7 @@ class ApiClient {
           if (responseData is Map && responseData['detail'] != null) {
             final detail = responseData['detail'];
             cleanMessage = detail is List
-                ? detail.first['msg'].toString()
+                ? '${detail.first['loc']}: ${detail.first['msg']}'
                 : detail.toString();
           } else if (e.message != null) {
             cleanMessage = e.message!;
@@ -100,6 +100,7 @@ class ApiClient {
       'password': password,
     };
 
+
     final Response response = await dio.post(
       path,
       data: payload,
@@ -129,15 +130,11 @@ class ApiClient {
     }
 
     if (isRegister) {
-      return authenticate(
-        email: email,
-        password: password,
-        isRegister: false,
-        fullName: fullName,
-      );
+      return authenticate(fullName:fullName,email: email, password: password, isRegister: false);
     }
     return '';
   }
+
 
   // 2. PLANT IDENTIFICATION & INVENTORY ENDPOINTS
   Future<Options> _authHeaders() async {
@@ -170,6 +167,7 @@ class ApiClient {
   }
 
 
+
   /// Matches @router.post("/confirm-add")
   Future<Map<String, dynamic>> confirmAndAddPlant({
     required String selectedSpeciesId,
@@ -194,30 +192,38 @@ class ApiClient {
       }
     }
 
-    final Response response = await dio.post(
-      '/plants/confirm-add',
-      data: {
-        'selected_species_id': selectedSpeciesId,
-        'nickname': nickname,
-        'height_cm': heightCm,
-        'pot_size_inches': potSizeInches,
-        'current_room': currentRoom,
-        'temp_image_path': tempImagePath,
-        if (lat != null) 'gps_lat': lat,
-        if (lon != null) 'gps_lon': lon,
-      },
-      options: await _authHeaders(),
-    );
+    //_________________________________changes for error finding_______________________________
+    try {
+      final Response response = await dio.post(
+        '/plants/confirm-add',
+        data: {
+          'selected_species_id': selectedSpeciesId,
+          'nickname': nickname,
+          'height_cm': heightCm,
+          'pot_size_inches': potSizeInches,
+          'current_room': currentRoom,
+          'temp_image_path': tempImagePath,
+          if (lat != null) 'gps_lat': lat,
+          if (lon != null) 'gps_lon': lon,
+        },
+        options: await _authHeaders(),
+      );
 
-    // Mark home location as saved so future plants skip GPS lookup
-    if (!hasHomeLocation && lat != null && lon != null) {
-      await prefs.setBool('has_home_location', true);
+      if (!hasHomeLocation && lat != null && lon != null) {
+        await prefs.setBool('has_home_location', true);
+      }
+
+      return Map<String, dynamic>.from(response.data);
+    } on DioException catch (e) {
+      debugPrint('❌ [API ERROR] Status: ${e.response?.statusCode}');
+      debugPrint('❌ [API ERROR] Response Data: ${e.response?.data}');
+      debugPrint('❌ [API ERROR] Request Data: ${e.requestOptions.data}');
+      rethrow;
     }
-
-    return Map<String, dynamic>.from(response.data);
+    //______________________________________________________________________
   }
 
-  /// Matches @router.post("/diagnose")
+
   /// Matches @router.post("/diagnose")
   Future<Map<String, dynamic>> diagnosePlantImage({
     required String filePath,
