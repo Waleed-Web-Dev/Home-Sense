@@ -150,7 +150,7 @@ class Species {
   final bool toxic;
   final String toxicNote;
   final Sensitivity sensitivity;
-  final String? speciesId; // Added to track backend ID
+  final String? speciesId;
 
   const Species(
       this.name,
@@ -171,16 +171,17 @@ class Species {
     return Species(
       json['common_name'] ?? json['name'] ?? 'Unknown Plant',
       json['scientific_name'] ?? json['sci'] ?? '',
-      json['light_type'] ?? 'Bright indirect light',
-      'Check schedule after adding',
-      '50–60%',
+      json['light'] ?? 'Bright indirect light',
+      json['water'] ?? 'When top soil is dry',
+      json['humidity'] ?? '50–60%',
       json['is_toxic_to_pets'] ?? false,
-      'Keep away from pets and children if toxic.',
+      json['toxic_note'] ?? 'Pet-safe',
       sens,
       json['species_id']?.toString(),
     );
   }
 }
+
 
 
 
@@ -1614,6 +1615,8 @@ class _ScanFlowState extends State<ScanFlow> {
         content: Text('$name added to your garden'),
       ));
     } catch (e) {
+      debugPrint('422 Validation Error: ${e}');
+
       if (!mounted) return;
       toast(context, 'Failed to save plant. Please try again.', error: true);
     }
